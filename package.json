@@ -1,0 +1,26 @@
+{
+  "name": "steve",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "source/tools",
+      "source/bridge"
+    ],
+    "catalog": {
+      "@tsconfig/bun": "1.0.10",
+      "@types/bun": "1.2.21",
+      "typescript": "5.9.3",
+      "prettier": "3.8.0",
+      "consola": "^3.4.2"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --build"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "@tsconfig/bun": "catalog:",
+    "prettier": "catalog:",
+    "typescript": "catalog:"
+  }
+}
