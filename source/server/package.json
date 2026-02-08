@@ -1,0 +1,24 @@
+{
+  "name": "@steve/server",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "serve": "bun serve.ts"
+  },
+  "dependencies": {
+    "@hono/standard-validator": "catalog:",
+    "@standard-community/standard-json": "catalog:",
+    "@standard-community/standard-openapi": "catalog:",
+    "consola": "catalog:",
+    "hono": "catalog:",
+    "hono-openapi": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:"
+  }
+}

@@ -3,15 +3,23 @@
   "private": true,
   "workspaces": {
     "packages": [
-      "source/tools",
-      "source/bridge"
+      "source/cli",
+      "source/server"
     ],
     "catalog": {
       "@tsconfig/bun": "1.0.10",
       "@types/bun": "1.2.21",
       "typescript": "5.9.3",
       "prettier": "3.8.0",
-      "consola": "^3.4.2"
+      "consola": "^3.4.2",
+      "@hono/standard-validator": "^0.2.2",
+      "@standard-community/standard-json": "^0.3.5",
+      "@standard-community/standard-openapi": "^0.2.9",
+      "hono": "^4.11.5",
+      "hono-openapi": "^1.1.2",
+      "yargs": "^18.0.0",
+      "@types/yargs": "^17.0.33",
+      "zod": "^3.25.67"
     }
   },
   "scripts": {
