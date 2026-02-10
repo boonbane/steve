@@ -18,6 +18,7 @@
     "consola": "catalog:",
     "hono": "catalog:",
     "hono-openapi": "catalog:",
+    "zod-openapi": "^4.2.4",
     "zod": "catalog:"
   },
   "devDependencies": {

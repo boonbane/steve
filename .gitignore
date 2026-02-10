@@ -47,3 +47,4 @@ xcuserdata/
 *.dSYM
 .spall
 docs/agents
+.llm

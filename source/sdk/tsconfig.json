@@ -2,9 +2,9 @@
   "extends": "../tools/tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "lib": ["ESNext", "DOM"]
   },
   "include": ["src"],
-  "exclude": ["dist"],
-  "references": [{ "path": "../sdk" }, { "path": "../server" }]
+  "exclude": ["dist"]
 }

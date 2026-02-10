@@ -1,8 +1,10 @@
 {
   "files": [],
   "references": [
-    { "path": "source/cli" },
+    { "path": "plugins/web" },
     { "path": "source/core" },
-    { "path": "source/server" }
+    { "path": "source/server" },
+    { "path": "source/sdk" },
+    { "path": "source/cli" }
   ]
 }

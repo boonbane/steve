@@ -3,8 +3,10 @@
   "private": true,
   "workspaces": {
     "packages": [
+      "plugins/web",
       "source/cli",
       "source/core",
+      "source/sdk",
       "source/server"
     ],
     "catalog": {
@@ -27,6 +29,8 @@
   },
   "scripts": {
     "typecheck": "tsc --build",
+    "link": "bun run --cwd source/cli link",
+    "unlink": "bun run --cwd source/cli unlink",
     "serve": "bun run --cwd source/server serve",
     "format:swift": "swift format --configuration .swift-format --in-place --recursive source/ios",
     "format:ts": "prettier --write \"source/**/*.{ts,tsx}\" \"*.{json,md}\"",

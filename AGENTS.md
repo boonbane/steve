@@ -9,8 +9,12 @@ Bun monorepo with an iOS app.
 - `source`: Bun monorepo packages
   - `tools/`: dev tooling, always written with Bun + TS
   - `ios/`: iPhone app
-  - `server/`: HTTP API through which everything is routed.
+  - `server/`: HTTP API through which you interact with the assistant. Hono.
   - `core/`: Domain logic
+    - `core/src/db`: SQLite database that stores all persistent runtime data
+    - `core/src/prompts`: Builtin prompt templates
+    - `core/src/skill.ts`: LLM skills (i.e. instructions + references + metadata)
+    - `core/src/task.ts`: A high-level task to be invoked by the user; provides instructions, a set of skills, whitelisted directories
 
 # Commands
 
@@ -23,6 +27,7 @@ Bun monorepo with an iOS app.
 - Always export and import a single, top-level namespace instead of loose symbols
 - Always use the `tmux` skill when you need to run e.g. a server and a client simultaneously; never try to time them with `sleep` or `timeout`
 - Always `import path from "path"` instead of `import { whatever } from "path"`; same for `fs` and other Bun modules
+- Always use `db.run` from `Bun.sqlite`, not `db.exec`
 - Prefer single word variable names
 - Avoid using functions to organize code; instead, prefer to keep code in one function unless you need reuse
 - Avoid `try` and `catch`; instead, prefer to return error codes

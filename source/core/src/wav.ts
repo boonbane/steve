@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import consola from "consola";
 import {
   createContext,
@@ -97,12 +95,10 @@ export namespace Transcriber {
 
   export interface Input {
     whisper: Promise<WhisperContext>;
-    storage: Promise<string>;
   }
 
   export function create(input: Input): Handle {
     const chunks: ArrayBuffer[] = [];
-    const started = new Date();
 
     return {
       push(data) {
@@ -121,20 +117,11 @@ export namespace Transcriber {
           offset += samples.length;
         }
 
-        const wav = Wav.encode(combined, 16000);
-        const storage = await input.storage;
-        await fs.promises.mkdir(storage, { recursive: true });
-        const name = started.toISOString().replace(/[:.]/g, "-");
-        const file = path.join(storage, `${name}.wav`);
-        await Bun.write(file, wav);
-        consola.success(`voice: saved ${file} (${wav.byteLength}B)`);
-
         const pcm = new Float32Array(combined.length);
         for (let i = 0; i < combined.length; i++) {
           pcm[i] = combined[i]! / 32768.0;
         }
 
-        consola.info("voice: transcribing...");
         const whisper = await input.whisper;
         const segments = await whisper.transcribe({
           pcm,

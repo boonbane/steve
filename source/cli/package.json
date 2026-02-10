@@ -9,7 +9,13 @@
   "bin": {
     "steve": "src/index.ts"
   },
+  "scripts": {
+    "link": "bun link",
+    "unlink": "bun unlink"
+  },
   "dependencies": {
+    "@steve/sdk": "workspace:*",
+    "@steve/server": "workspace:*",
     "consola": "catalog:",
     "yargs": "catalog:"
   },

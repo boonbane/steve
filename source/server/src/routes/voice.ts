@@ -2,8 +2,7 @@ import { Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import consola from "consola";
 import { z } from "zod";
-import path from "path";
-import { Context, Transcriber } from "@steve/core";
+import { Context, Message, Transcriber } from "@steve/core";
 
 namespace Voice {
   export const Transcription = z.object({
@@ -40,9 +39,6 @@ export function VoiceRoutes() {
     upgradeWebSocket(() => {
       const transcriber = Transcriber.create({
         whisper: Context.whisper(),
-        storage: Context.dirs().then((dirs) =>
-          path.join(dirs.storage, "audio"),
-        ),
       });
 
       return {
@@ -62,6 +58,9 @@ export function VoiceRoutes() {
 
         async onClose(_, ws) {
           const text = await transcriber.transcribe();
+          if (text) {
+            await Message.add(text);
+          }
 
           send(ws, {
             type: "done",

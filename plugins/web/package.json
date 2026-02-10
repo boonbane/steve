@@ -1,0 +1,16 @@
+{
+  "name": "steve-plugin-web-interface",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "@steve/sdk": "workspace:*",
+    "consola": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:"
+  }
+}
