@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { build, type CliDef } from "./src/cli/index.ts";
-import { ios } from "./src/ios/index.ts";
+import { build, type CliDef } from "./cli/index.ts";
+import { ios } from "./ios/index.ts";
 
 function main() {
   const def: CliDef = {

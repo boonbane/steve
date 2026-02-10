@@ -2,14 +2,16 @@
   "name": "@steve/server",
   "version": "0.0.1",
   "type": "module",
-  "main": "index.ts",
+  "main": "src/index.ts",
   "exports": {
-    ".": "./index.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "serve": "bun serve.ts"
+    "serve": "bun src/serve.ts"
   },
   "dependencies": {
+    "@steve/core": "workspace:*",
+    "node-whisper-cpp": "catalog:",
     "@hono/standard-validator": "catalog:",
     "@standard-community/standard-json": "catalog:",
     "@standard-community/standard-openapi": "catalog:",

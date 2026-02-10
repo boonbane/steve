@@ -45,3 +45,5 @@ xcuserdata/
 *.ipa
 *.dSYM.zip
 *.dSYM
+.spall
+docs/agents

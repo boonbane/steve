@@ -1,20 +1,8 @@
 {
-  "compilerOptions": {
-    "allowImportingTsExtensions": true,
-    "lib": ["ESNext"],
-    "module": "Preserve",
-    "moduleDetection": "force",
-    "moduleResolution": "bundler",
-    "noEmit": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false,
-    "skipLibCheck": true,
-    "strict": true,
-    "target": "ESNext",
-    "verbatimModuleSyntax": true
-  }
+  "files": [],
+  "references": [
+    { "path": "source/cli" },
+    { "path": "source/core" },
+    { "path": "source/server" }
+  ]
 }

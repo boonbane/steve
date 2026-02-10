@@ -20,9 +20,9 @@ export function EchoRoutes() {
       },
     }),
     validator("json", Echo.send.schema),
-    (c) => {
+    async (c) => {
       const input = c.req.valid("json");
-      const result = Echo.send(input);
+      const result = await Echo.send(input);
       return c.json(result);
     },
   );

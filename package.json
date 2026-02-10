@@ -4,6 +4,7 @@
   "workspaces": {
     "packages": [
       "source/cli",
+      "source/core",
       "source/server"
     ],
     "catalog": {
@@ -17,18 +18,28 @@
       "@standard-community/standard-openapi": "^0.2.9",
       "hono": "^4.11.5",
       "hono-openapi": "^1.1.2",
+      "@opencode-ai/sdk": "^1.1.53",
       "yargs": "^18.0.0",
       "@types/yargs": "^17.0.33",
-      "zod": "^3.25.67"
+      "zod": "^4.3.6",
+      "node-whisper-cpp": "*"
     }
   },
   "scripts": {
-    "typecheck": "tsc --build"
+    "typecheck": "tsc --build",
+    "serve": "bun run --cwd source/server serve",
+    "format:swift": "swift format --configuration .swift-format --in-place --recursive source/ios",
+    "format:ts": "prettier --write \"source/**/*.{ts,tsx}\" \"*.{json,md}\"",
+    "format": "bun run format:swift && bun run format:ts"
   },
   "devDependencies": {
     "@types/bun": "catalog:",
     "@tsconfig/bun": "catalog:",
     "prettier": "catalog:",
     "typescript": "catalog:"
+  },
+  "dependencies": {
+    "@node-whisper-cpp/mac-arm64-metal": ".cache/whisper/npm/@node-whisper-cpp/mac-arm64-metal/node-whisper-cpp-mac-arm64-metal-0.0.1.tgz",
+    "node-whisper-cpp": ".cache/whisper/npm/node-whisper-cpp/node-whisper-cpp-0.0.1.tgz"
   }
 }

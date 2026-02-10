@@ -1,0 +1,94 @@
+import path from "path";
+import { createOpencode, type OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { Context as WhisperContext } from "node-whisper-cpp";
+import { Config } from "./config.ts";
+import { Skill } from "./skill.ts";
+import { Wav } from "./wav.ts";
+
+export namespace Context {
+  export interface Opencode {
+    client: OpencodeClient;
+    url: string;
+    close: () => void;
+  }
+
+  export interface Dirs {
+    storage: string;
+    models: string;
+    model: (name: string) => string;
+    skills: string;
+    prompts: string;
+    prompt: (name: string) => string;
+  }
+
+  interface Store {
+    config?: Config.Resolved;
+    dirs?: Dirs;
+    skills?: Skill.List;
+    opencode?: Promise<Opencode>;
+    whisper?: Promise<WhisperContext>;
+  }
+
+  let store: Store = {};
+
+  export async function config(): Promise<Config.Resolved> {
+    if (store.config) return store.config;
+    store.config = await Config.load();
+    return store.config;
+  }
+
+  export async function dirs(): Promise<Dirs> {
+    if (store.dirs) return store.dirs;
+    const cfg = await config();
+    const storage = path.join(cfg.dir, "storage");
+    const models = path.join(cfg.dir, "models");
+    const prompts = path.join(cfg.dir, "prompts");
+    store.dirs = {
+      storage,
+      models,
+      model: (name) => path.join(models, name),
+      skills: path.join(cfg.dir, "skills"),
+      prompts,
+      prompt: (name) => path.join(prompts, `${name}.md`),
+    };
+    return store.dirs;
+  }
+
+  export async function skills(): Promise<Skill.List> {
+    if (store.skills) return store.skills;
+    store.skills = await Skill.load();
+    return store.skills;
+  }
+
+  export async function opencode(): Promise<Opencode> {
+    if (store.opencode) return store.opencode;
+    store.opencode = createOpencode().then((runtime) => {
+      return {
+        client: runtime.client,
+        url: runtime.server.url,
+        close: runtime.server.close,
+      };
+    });
+    return store.opencode;
+  }
+
+  export async function whisper(): Promise<WhisperContext> {
+    if (store.whisper) return store.whisper;
+    store.whisper = dirs().then((dirs) =>
+      Wav.whisper(dirs.model("ggml-base.en.bin")),
+    );
+    return store.whisper;
+  }
+
+  export function reset() {
+    const opencode = store.opencode;
+    const whisper = store.whisper;
+    store = {};
+    if (opencode) void opencode.then((runtime) => runtime.close());
+    if (whisper) void whisper.then((ctx) => ctx.free());
+  }
+
+  export function override(values: Partial<Store>) {
+    Object.assign(store, values);
+  }
+}

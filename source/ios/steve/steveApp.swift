@@ -1,17 +1,15 @@
-//
-//  steveApp.swift
-//  steve
-//
-//  Created by Thomas Spader on 2/8/26.
-//
-
+import AppIntents
 import SwiftUI
 
 @main
 struct steveApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
+  init() {
+    SteveShortcuts.updateAppShortcutParameters()
+  }
+
+  var body: some Scene {
+    WindowGroup {
+      ContentView()
     }
+  }
 }
