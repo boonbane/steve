@@ -1,6 +1,5 @@
 import { z } from "zod";
-import consola from "consola";
-import { Agent } from "@steve/core";
+import { Agent, logger } from "@steve/core";
 import { api } from "./api.ts";
 
 export namespace Echo {
@@ -20,13 +19,11 @@ export namespace Echo {
   export type Output = z.infer<typeof Output>;
 
   export const send = api(Input, async (input): Promise<Output> => {
-    const cwd = process.cwd();
     const client = await Agent.client();
     const opencodeURL = await client.url();
-    consola.info("echo opencode server", opencodeURL);
+    logger.info(`echo opencode server ${opencodeURL}`);
 
     const result = await client.prompt({
-      cwd,
       text: input.message,
     });
 

@@ -6,7 +6,7 @@ import { Context } from "./context.ts";
 const FIXTURE = resolve(import.meta.dir, "../test/jfk.wav");
 
 afterAll(() => {
-  Context.reset();
+  return Context.reset();
 });
 
 describe("Whisper", () => {

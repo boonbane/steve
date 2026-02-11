@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "plugins/imessage" },
     { "path": "plugins/web" },
     { "path": "source/core" },
     { "path": "source/server" },

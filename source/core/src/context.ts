@@ -1,9 +1,11 @@
 import path from "path";
-import { createOpencode, type OpencodeClient } from "@opencode-ai/sdk/v2";
+import pino from "pino";
+import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { Database } from "bun:sqlite";
 import type { Context as WhisperContext } from "node-whisper-cpp";
 import { Config } from "./config.ts";
 import { DB } from "./db.ts";
+import { Opencode } from "./opencode.ts";
 import { Skill } from "./skill.ts";
 import { Task } from "./task.ts";
 import { Wav } from "./wav.ts";
@@ -16,7 +18,8 @@ export namespace Context {
   }
 
   export interface Dirs {
-    storage: string;
+    logs: string;
+    log: (name: string) => string;
     data: string;
     db: string;
     models: string;
@@ -30,40 +33,86 @@ export namespace Context {
   interface Store {
     config?: Config.Resolved;
     dirs?: Dirs;
+    logger?: pino.Logger;
     skills?: Skill.List;
     tasks?: Task.List;
     db?: Promise<Database>;
     opencode?: Promise<Opencode>;
-    whisper?: Promise<WhisperContext>;
+    whisper?: WhisperContext;
   }
 
   let store: Store = {};
 
-  export async function config(): Promise<Config.Resolved> {
+  async function close(value: Store) {
+    const tasks: Promise<unknown>[] = [];
+
+    if (value.opencode) {
+      tasks.push(
+        value.opencode
+          .then((runtime) => runtime.close())
+          .catch(() => undefined),
+      );
+    }
+    if (value.whisper) {
+      value.whisper.free();
+    }
+    if (value.db) {
+      tasks.push(DB.close(value.db).catch(() => undefined));
+    }
+
+    await Promise.all(tasks);
+  }
+
+  export function config(): Config.Resolved {
     if (store.config) return store.config;
-    store.config = await Config.load();
+    store.config = Config.load();
     return store.config;
   }
 
-  export async function dirs(): Promise<Dirs> {
+  export function dirs(): Dirs {
     if (store.dirs) return store.dirs;
-    const cfg = await config();
-    const data = cfg.data;
-    const storage = path.join(cfg.dir, "storage");
-    const models = path.join(cfg.dir, "models");
-    const prompts = path.join(cfg.dir, "prompts");
+
+    const c = config();
     store.dirs = {
-      data,
-      db: path.join(data, "steve.db"),
-      storage,
-      models,
-      model: (name) => path.join(models, name),
-      skills: path.join(cfg.dir, "skills"),
-      tasks: path.join(cfg.dir, "tasks"),
-      prompts,
-      prompt: (name) => path.join(prompts, `${name}.md`),
+      data: c.data,
+      db: path.join(c.data, "steve.db"),
+      logs: path.join(c.data, "logs"),
+      log: (name: string) => path.join(store.dirs!.logs, name),
+      models: path.join(c.data, "models"),
+      model: (name) => path.join(store.dirs!.models, name),
+      skills: path.join(c.dir, "skills"),
+      tasks: path.join(c.dir, "tasks"),
+      prompts: path.join(c.dir, "prompts"),
+      prompt: (name) => path.join(store.dirs!.prompts, `${name}.md`),
     };
     return store.dirs;
+  }
+
+  export function logger(): pino.Logger {
+    if (!store.logger) {
+      const transport = pino.transport({
+        targets: [
+          {
+            target: "pino-roll",
+            options: {
+              file: dirs().log("steve.log"),
+              frequency: "daily",
+              mkdir: true,
+            },
+          },
+          {
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+            },
+          }
+        ]
+      })
+
+      store.logger = pino(transport);
+    }
+
+    return store.logger;
   }
 
   export async function skills(): Promise<Skill.List> {
@@ -80,45 +129,41 @@ export namespace Context {
 
   export async function db(): Promise<Database> {
     if (store.db) return store.db;
-    store.db = dirs().then((dirs) => DB.open(dirs.db));
+    store.db = DB.open(dirs().db);
     return store.db;
   }
 
   export async function opencode(): Promise<Opencode> {
     if (store.opencode) return store.opencode;
-    store.opencode = createOpencode().then((runtime) => {
-      return {
-        client: runtime.client,
-        url: runtime.server.url,
-        close: runtime.server.close,
-      };
+    const result = Opencode.load();
+    store.opencode = result;
+    void result.catch(() => {
+      if (store.opencode === result) {
+        store.opencode = undefined;
+      }
     });
-    return store.opencode;
+    return result;
   }
 
-  export async function whisper(): Promise<WhisperContext> {
+  const WHISPER_MODEL = "ggml-base.en.bin";
+  export function whisper(): WhisperContext {
     if (store.whisper) return store.whisper;
-    store.whisper = dirs().then((dirs) =>
-      Wav.whisper(dirs.model("ggml-base.en.bin")),
-    );
+    store.whisper = Wav.whisper(dirs().model(WHISPER_MODEL));
     return store.whisper;
   }
 
-  export function reset() {
-    const opencode = store.opencode;
-    const whisper = store.whisper;
-    const db = store.db;
+  export async function reset() {
+    const value = store;
     store = {};
-    if (opencode) void opencode.then((runtime) => runtime.close());
-    if (whisper) void whisper.then((ctx) => ctx.free());
-    if (db) void DB.close(db);
+    await close(value);
   }
 
   export function override(values: Partial<Store>) {
     Object.assign(store, values);
   }
 
-  export function setDir(dir: string) {
+  export async function setDir(dir: string) {
+    const value = store;
     store = {
       ...store,
       config: { dir, data: dir },
@@ -126,6 +171,17 @@ export namespace Context {
       skills: undefined,
       tasks: undefined,
       db: undefined,
+      opencode: undefined,
+      whisper: undefined,
     };
+    await close(value);
   }
 }
+
+export const logger: pino.Logger = new Proxy({} as pino.Logger, {
+  get(_, k) {
+    const v = Context.logger()[k as keyof pino.Logger];
+    if (typeof v === "function") return v.bind(Context.logger());
+    return v;
+  },
+});

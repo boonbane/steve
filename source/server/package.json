@@ -15,7 +15,6 @@
     "@hono/standard-validator": "catalog:",
     "@standard-community/standard-json": "catalog:",
     "@standard-community/standard-openapi": "catalog:",
-    "consola": "catalog:",
     "hono": "catalog:",
     "hono-openapi": "catalog:",
     "zod-openapi": "^4.2.4",

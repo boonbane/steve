@@ -1,6 +1,6 @@
-import consola from "consola";
 import { websocket } from "hono/bun";
 import { App } from "./app.ts";
+import { logger } from "@steve/core";
 
 export namespace Server {
   export type Options = {
@@ -16,7 +16,7 @@ export namespace Server {
       websocket,
     });
 
-    consola.info(`listening on http://localhost:${server.port}`);
+    logger.info(`Listening on http://localhost:${server.port}`);
     return server;
   }
 }

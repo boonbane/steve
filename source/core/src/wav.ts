@@ -1,4 +1,4 @@
-import consola from "consola";
+import { logger } from "./context.ts";
 import {
   createContext,
   type Context as WhisperContext,
@@ -82,30 +82,25 @@ export namespace Wav {
 
   export function whisper(model: string): WhisperContext {
     const ctx = createContext({ model });
-    consola.success("voice: whisper model loaded");
+    logger.info("voice: whisper model loaded");
     return ctx;
   }
 }
 
 export namespace Transcriber {
   export interface Handle {
+    size(): number;
     push(data: ArrayBuffer): void;
     transcribe(): Promise<string>;
   }
 
-  export interface Input {
-    whisper: Promise<WhisperContext>;
-  }
-
-  export function create(input: Input): Handle {
+  export function create(whisper: WhisperContext): Handle {
     const chunks: ArrayBuffer[] = [];
 
     return {
-      push(data) {
-        chunks.push(data);
-      },
-
-      async transcribe() {
+      size: () => chunks.length,
+      push: (data) => chunks.push(data),
+      transcribe: async () => {
         const bytes = chunks.reduce((n, c) => n + c.byteLength, 0);
         if (bytes === 0) return "";
 
@@ -122,7 +117,6 @@ export namespace Transcriber {
           pcm[i] = combined[i]! / 32768.0;
         }
 
-        const whisper = await input.whisper;
         const segments = await whisper.transcribe({
           pcm,
           language: "en",
@@ -133,7 +127,7 @@ export namespace Transcriber {
           .map((s: Segment) => s.text)
           .join("")
           .trim();
-        consola.success(`voice: "${text}"`);
+        logger.info(`voice: "${text}"`);
         return text;
       },
     };

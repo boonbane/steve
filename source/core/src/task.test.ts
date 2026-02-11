@@ -40,12 +40,12 @@ async function writeTasks(root: string, items: Item[]) {
 async function loadTasks(items: Item[]): Promise<Task.List> {
   const root = await tmpRoot("load");
   await writeTasks(root, items);
-  Context.setDir(root);
+  await Context.setDir(root);
   return Context.tasks();
 }
 
 afterEach(async () => {
-  Context.reset();
+  await Context.reset();
   if (root) {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
@@ -156,7 +156,7 @@ describe("Task", () => {
       },
     ]);
 
-    Context.setDir(root);
+    await Context.setDir(root);
     const first = await Context.tasks();
     expect(Object.keys(first)).toEqual(["alpha"]);
 
@@ -178,7 +178,7 @@ describe("Task", () => {
       },
     ]);
 
-    Context.setDir(root);
+    await Context.setDir(root);
     const second = await Context.tasks();
     expect(Object.keys(second)).toEqual(["beta"]);
   });

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import fs from "fs";
 import path from "path";
 import { SQL } from "./sql.ts";
-export { Message } from "./db/index.ts";
+export { App, Message } from "./db/index.ts";
 
 export namespace DB {
   export async function open(file: string): Promise<Database> {

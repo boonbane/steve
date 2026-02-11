@@ -1,6 +1,17 @@
 import AVFoundation
 import Foundation
 
+struct ChatMessage: Identifiable {
+  let id = UUID()
+  let text: String
+  let role: Role
+
+  enum Role {
+    case user
+    case agent
+  }
+}
+
 @Observable
 final class VoiceService {
   static let shared = VoiceService()
@@ -8,6 +19,8 @@ final class VoiceService {
   enum State: Equatable {
     case idle
     case streaming
+    case transcribing
+    case thinking
     case done
     case disconnected
     case failed(String)
@@ -15,6 +28,8 @@ final class VoiceService {
 
   var recording = false
   var transcript = ""
+  var response = ""
+  var messages: [ChatMessage] = []
   var state: State = .idle
   var bytes = 0
 
@@ -24,6 +39,10 @@ final class VoiceService {
       return ""
     case .streaming:
       return "streaming"
+    case .transcribing:
+      return "transcribing..."
+    case .thinking:
+      return "thinking..."
     case .done:
       return "done"
     case .disconnected:
@@ -72,12 +91,12 @@ final class VoiceService {
     engine?.inputNode.removeTap(onBus: 0)
     engine?.stop()
     engine = nil
-    task?.cancel(with: .normalClosure, reason: nil)
-    task = nil
     recording = false
-    if case .streaming = state {
-      state = .idle
-    }
+
+    guard let ws = task else { return }
+    state = .transcribing
+    let done = #"{"type":"done"}"#
+    ws.send(.string(done)) { _ in }
   }
 
   func toggle() {
@@ -88,8 +107,14 @@ final class VoiceService {
     start()
   }
 
+  private func closeSocket() {
+    task?.cancel(with: .normalClosure, reason: nil)
+    task = nil
+  }
+
   private func begin() {
     transcript = ""
+    response = ""
     state = .idle
     bytes = 0
 
@@ -170,7 +195,7 @@ final class VoiceService {
       case .failure:
         DispatchQueue.main.async {
           self.state = .disconnected
-          self.stop()
+          self.closeSocket()
         }
       }
     }
@@ -188,14 +213,23 @@ final class VoiceService {
           self.transcript = t
         }
       case "done":
-        if let t = msg.text {
+        if let t = msg.text, !t.isEmpty {
           self.transcript = t
+          self.messages.append(ChatMessage(text: t, role: .user))
+          self.state = .thinking
+        }
+      case "response":
+        if let t = msg.text, !t.isEmpty {
+          self.response = t
+          self.messages.append(ChatMessage(text: t, role: .agent))
         }
         self.state = .done
+        self.closeSocket()
       case "error":
         if let m = msg.message {
           self.state = .failed("error: \(m)")
         }
+        self.closeSocket()
       default:
         break
       }

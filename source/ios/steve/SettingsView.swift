@@ -11,11 +11,6 @@ struct SettingsView: View {
           .autocorrectionDisabled()
           .keyboardType(.URL)
 
-        if !server.isEmpty {
-          Text(server)
-            .font(.caption2)
-            .foregroundColor(.secondary)
-        }
       }
     }
     .navigationTitle("Settings")

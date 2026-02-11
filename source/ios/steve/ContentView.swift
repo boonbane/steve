@@ -6,38 +6,49 @@ struct ContentView: View {
 
   var body: some View {
     NavigationStack {
-      VStack(spacing: 24) {
-        Button(voice.recording ? "Stop" : "Record") {
-          if voice.recording {
-            voice.stop()
-            return
+      VStack(spacing: 0) {
+        ScrollViewReader { proxy in
+          ScrollView {
+            LazyVStack(spacing: 12) {
+              ForEach(voice.messages) { msg in
+                Bubble(message: msg)
+                  .id(msg.id)
+              }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
           }
-          voice.start()
-        }
-        .font(.title)
-        .padding(.horizontal, 40)
-        .padding(.vertical, 16)
-        .background(voice.recording ? Color.red : Color.blue)
-        .foregroundColor(.white)
-        .cornerRadius(12)
-
-        if !voice.status.isEmpty {
-          Text(voice.status)
-            .font(.caption)
-            .foregroundColor(.secondary)
+          .onChange(of: voice.messages.count) {
+            if let last = voice.messages.last {
+              withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+            }
+          }
         }
 
-        if voice.bytes > 0 {
-          Text(format(voice.bytes))
-            .font(.caption2)
-            .foregroundColor(.secondary)
-        }
+        Divider()
 
-        if !voice.transcript.isEmpty {
-          Text(voice.transcript)
-            .font(.body)
-            .padding()
+        VStack(spacing: 8) {
+          if !voice.status.isEmpty {
+            Text(voice.status)
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+
+          Button(voice.recording ? "Stop" : "Record") {
+            if voice.recording {
+              voice.stop()
+              return
+            }
+            voice.start()
+          }
+          .font(.title2)
+          .padding(.horizontal, 40)
+          .padding(.vertical, 12)
+          .background(voice.recording ? Color.red : Color.blue)
+          .foregroundColor(.white)
+          .cornerRadius(12)
         }
+        .padding(.vertical, 12)
       }
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
@@ -53,15 +64,24 @@ struct ContentView: View {
       }
     }
   }
+}
 
-  func format(_ bytes: Int) -> String {
-    if bytes < 1024 {
-      return "\(bytes) B"
+struct Bubble: View {
+  let message: ChatMessage
+
+  var body: some View {
+    HStack {
+      if message.role == .user { Spacer(minLength: 60) }
+
+      Text(message.text)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(message.role == .user ? Color.blue : Color(.systemGray5))
+        .foregroundColor(message.role == .user ? .white : .primary)
+        .cornerRadius(16)
+
+      if message.role == .agent { Spacer(minLength: 60) }
     }
-    if bytes < 1024 * 1024 {
-      return String(format: "%.1f KB", Double(bytes) / 1024.0)
-    }
-    return String(format: "%.1f MB", Double(bytes) / (1024.0 * 1024.0))
   }
 }
 

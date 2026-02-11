@@ -11,10 +11,10 @@
     "build": "bun run script/build.ts"
   },
   "dependencies": {
-    "@hey-api/client-fetch": "^0.10.0",
-    "consola": "catalog:"
+    "@hey-api/client-fetch": "^0.10.0"
   },
   "devDependencies": {
+    "@steve/core": "workspace:*",
     "@steve/server": "workspace:*",
     "@hey-api/openapi-ts": "^0.90.10",
     "@types/bun": "catalog:"

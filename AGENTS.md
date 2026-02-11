@@ -29,6 +29,7 @@ Bun monorepo with an iOS app.
 - Always `import path from "path"` instead of `import { whatever } from "path"`; same for `fs` and other Bun modules
 - Always use `db.run` from `Bun.sqlite`, not `db.exec`
 - Prefer single word variable names
+- Prefer small, local utilities to reduce duplication and boilerplate
 - Avoid using functions to organize code; instead, prefer to keep code in one function unless you need reuse
 - Avoid `try` and `catch`; instead, prefer to return error codes
 - Avoid `else` statements

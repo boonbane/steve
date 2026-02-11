@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { logger } from "hono/logger";
+import { requestId } from "hono/request-id";
 import {
   describeRoute,
   generateSpecs,
@@ -7,7 +7,7 @@ import {
   validator,
 } from "hono-openapi";
 import { z } from "zod";
-import { Agent, Message } from "@steve/core";
+import { Agent, Message, Timer, logger } from "@steve/core";
 import { HealthRoutes } from "./routes/health.ts";
 import { EchoRoutes } from "./routes/echo.ts";
 import { VoiceRoutes } from "./routes/voice.ts";
@@ -26,7 +26,32 @@ const ErrorOutput = z.object({
 
 export namespace App {
   const app = new Hono()
-    .use(logger())
+    .use(requestId())
+    .use(async (c, next) => {
+      const start = Bun.nanoseconds();
+      await next();
+      const elapsed = (Bun.nanoseconds() - start) / 1_000_000;
+      const requestID = c.get("requestId") as string | undefined;
+      const userAgent = c.req.header("user-agent");
+      const contentLength = c.res.headers.get("content-length");
+      const bytes = contentLength ? Number(contentLength) : undefined;
+      logger.info(
+        {
+          req: {
+            id: requestID,
+            method: c.req.method,
+            path: c.req.path,
+            userAgent,
+          },
+          res: {
+            status: c.res.status,
+            bytes,
+          },
+          elapsed,
+        },
+        "http request",
+      );
+    })
     .route("/health", HealthRoutes())
     .route("/echo", EchoRoutes())
     .route("/voice", VoiceRoutes())
@@ -57,12 +82,12 @@ export namespace App {
       validator("json", PromptInput),
       async (c) => {
         const input = c.req.valid("json");
+        logger.info(`prompt text ${input.text}`);
         const message = await Message.add(input.text);
         const client = await Agent.client();
-        const output = await client.prompt({
-          cwd: process.cwd(),
-          text: input.text,
-        });
+        const output = await Timer.run("agent response", () =>
+          client.prompt({ text: input.text }),
+        );
         const response = await Message.respond(message.id, output.text);
         return c.json({
           ...message,

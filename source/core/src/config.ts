@@ -1,4 +1,5 @@
 import { join, resolve } from "path";
+import fs from "fs";
 import { z } from "zod/v4";
 
 export const Schema = z.object({
@@ -9,24 +10,24 @@ export const Schema = z.object({
 export namespace Config {
   export type Resolved = { dir: string; data: string };
 
-  export async function load(): Promise<Resolved> {
-    const dir =
-      process.env.STEVE_CONFIG_DIR ??
-      resolve(process.env.HOME!, ".config/steve");
-    const data =
-      process.env.STEVE_DATA_DIR ??
-      resolve(process.env.HOME!, ".local/share/steve");
+  const envOr = (envVar: string, path: string) => {
+    return process.env[envVar] ?? resolve(process.env.HOME!, path)
+  }
+
+  export function load(): Resolved {
+    const data = envOr("STEVE_DATA_DIR", ".local/share/steve")
+    const dir = envOr("STEVE_CONFIG_DIR", ".config/steve")
     const path = join(dir, "steve.json");
 
-    const file = Bun.file(path);
-    if (!(await file.exists())) {
-      return { dir, data };
+    if (!fs.existsSync(path)) {
+      return { dir, data }
     }
 
-    const raw = Schema.parse(await file.json());
+    const json = JSON.parse(fs.readFileSync(path, "utf8"))
+    const config = Schema.parse(json);
     return {
-      dir: raw.dir ?? dir,
-      data: raw.data ?? data,
+      dir: config.dir ?? dir,
+      data: config.data ?? data,
     };
   }
 }

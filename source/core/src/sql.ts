@@ -12,6 +12,10 @@ export namespace SQL {
       timestamp INTEGER NOT NULL,
       FOREIGN KEY(message_id) REFERENCES messages(id)
     )`,
+    `CREATE TABLE IF NOT EXISTS app (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`,
     "CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)",
     "CREATE INDEX IF NOT EXISTS idx_responses_timestamp ON responses(timestamp)",
     "CREATE INDEX IF NOT EXISTS idx_responses_message_id ON responses(message_id)",
@@ -36,4 +40,9 @@ LEFT JOIN responses r ON r.message_id = m.id
 ORDER BY m.timestamp DESC
 LIMIT ?1
 `;
+
+  export const APP_GET = "SELECT key, value FROM app WHERE key = ?1";
+
+  export const APP_SET =
+    "INSERT INTO app (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
 }

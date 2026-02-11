@@ -7,7 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "consola": "catalog:",
     "@opencode-ai/sdk": "catalog:",
     "node-whisper-cpp": "catalog:",
     "zod": "catalog:"
