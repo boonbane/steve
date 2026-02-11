@@ -7,6 +7,16 @@ import { ios } from "./ios/index.ts";
 const serve: CommandDef = {
   description: "Start the Steve server",
   handler: async () => {
+    const client = await Client.connect();
+    const result = await client.health();
+    if (result && !result.error && result.data) {
+      const uptime = Math.floor(result.data.uptime);
+      consola.info(
+        `server already running url=${Client.url()} uptime=${uptime}s`,
+      );
+      return;
+    }
+
     const { Server } = await import("@steve/server");
     Server.start();
   },
@@ -30,6 +40,49 @@ const status: CommandDef = {
   },
 };
 
+const promptSystem: CommandDef = {
+  description: "Compile the system prompt",
+  positionals: {
+    text: {
+      type: "string",
+      description: "Optional prompt text for {{steve.prompt}}",
+    },
+  },
+  handler: async (argv) => {
+    const { Prompt } = await import("@steve/core");
+    const text = typeof argv.text === "string" ? argv.text : "";
+    const result = await Prompt.system({
+      "steve.prompt": text,
+    });
+    process.stdout.write(`${result}\n`);
+  },
+};
+
+const promptTask: CommandDef = {
+  description: "Compile a task prompt",
+  positionals: {
+    task: {
+      type: "string",
+      description: "Task name",
+      required: true,
+    },
+  },
+  handler: async (argv) => {
+    const { Prompt } = await import("@steve/core");
+    const task = String(argv.task);
+    const result = await Prompt.task(task);
+    process.stdout.write(`${result}\n`);
+  },
+};
+
+const prompt: CommandDef = {
+  description: "Compile Steve prompts",
+  commands: {
+    system: promptSystem,
+    task: promptTask,
+  },
+};
+
 function main() {
   const def: CliDef = {
     name: "steve",
@@ -37,6 +90,7 @@ function main() {
     commands: {
       serve,
       status,
+      prompt,
       ios,
     },
   };
