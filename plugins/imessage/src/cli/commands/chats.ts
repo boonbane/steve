@@ -41,8 +41,13 @@ export namespace ChatsCommand {
     });
 
     const client = Client({ dbPath: args.db });
-    const chats = client.list(args.limit);
-    client.close();
+    let chats: Chat[] = [];
+
+    try {
+      chats = client.list(args.limit);
+    } finally {
+      client.close();
+    }
 
     if (chats.length === 0) {
       process.stdout.write(`${defaultTheme.dim("(no chats)")}\n`);

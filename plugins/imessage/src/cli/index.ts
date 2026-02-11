@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { build, type CliDef } from "../shared/yargs.ts";
-import { chats } from "./commands/index.ts";
+import { chats, history, send, watch } from "./commands/index.ts";
 
 export namespace IMsgCli {
   export const def: CliDef = {
@@ -9,6 +9,9 @@ export namespace IMsgCli {
     description: "Read iMessage chats from macOS Messages database",
     commands: {
       chats,
+      history,
+      send,
+      watch,
     },
   };
 
