@@ -8,7 +8,7 @@ export namespace Timer {
     const start = Bun.nanoseconds();
     const result = await fn();
     const elapsed = (Bun.nanoseconds() - start) / 1_000_000;
-    logger.info(`${label} ${elapsed.toFixed(1)}ms`);
+    logger.info({ elapsed: `${elapsed.toFixed(1)}ms` }, label);
     return result;
   }
 }

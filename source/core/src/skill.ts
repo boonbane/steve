@@ -2,6 +2,7 @@ import path from "path";
 import fs from "fs";
 import { z } from "zod/v4";
 import { Context } from "./context.ts";
+import { Json } from "./json.ts";
 
 export namespace Skill {
   const Schema = z.object({
@@ -27,40 +28,35 @@ export namespace Skill {
     };
   };
 
-  const getFiles = (dir: string) => {
+  function validate(dir: string): Resolved | undefined {
     const { md, json } = getPaths(dir);
-    return {
-      md: Bun.file(md),
-      json: Bun.file(json),
-    };
-  };
+    if (!fs.existsSync(md)) return undefined;
+    if (!fs.existsSync(json)) return undefined;
 
-  async function validate(dir: string): Promise<Resolved | undefined> {
-    const { md, json } = getFiles(dir);
-    if (!(await md.exists())) return undefined;
-    if (!(await json.exists())) return undefined;
+    const data = Json.tryParseFile(json);
+    if (data.type !== "ok") return undefined;
 
-    const result = Schema.safeParse(await json.json());
+    const result = Schema.safeParse(data.data);
     if (!result.success) return undefined;
 
     return {
       metadata: result.data,
-      content: await md.text(),
+      content: fs.readFileSync(md, "utf8"),
       dir,
     };
   }
 
-  export async function load(): Promise<List> {
+  export function load(): List {
     const skills: List = {};
 
-    const dirs = await Context.dirs();
+    const dirs = Context.dirs();
     if (!fs.existsSync(dirs.skills)) return skills;
 
     const entries = fs.readdirSync(dirs.skills, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
 
-      const skill = await validate(path.join(dirs.skills, entry.name));
+      const skill = validate(path.join(dirs.skills, entry.name));
       if (!skill) continue;
 
       skills[skill.metadata.name] = skill;
@@ -69,8 +65,8 @@ export namespace Skill {
     return skills;
   }
 
-  export async function get(name: string): Promise<Resolved | undefined> {
-    const all = await load();
+  export function get(name: string): Resolved | undefined {
+    const all = Context.skills();
     return all[name];
   }
 }

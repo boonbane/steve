@@ -4,12 +4,18 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 type TruncateMode = "start" | "middle" | "end";
 
-export type TableOptions = {
+export type TableColumn<T> = {
+  id: string;
+  header: string;
+  value: (row: T, rowIndex: number) => string;
+  flex?: number;
+  noTruncate?: boolean;
+  truncate?: TruncateMode;
+  format?: (value: string, rowIndex: number, colIndex: number) => string;
+};
+
+export type TableRowsOptions = {
   maxWidth?: number;
-  flex?: number[];
-  noTruncate?: boolean[];
-  truncate?: TruncateMode[];
-  format?: Array<(value: string, row: number, col: number) => string>;
   maxRows?: number;
 };
 
@@ -52,8 +58,7 @@ function truncate(value: string, width: number, mode: TruncateMode): string {
 function fitWidths(
   natural: number[],
   available: number,
-  flex: number[],
-  noTruncate: boolean[],
+  cols: Array<{ flex: number; noTruncate: boolean }>,
 ): number[] {
   const widths = [...natural];
   const totalNatural = natural.reduce((sum, width) => sum + width, 0);
@@ -66,12 +71,12 @@ function fitWidths(
   const dynamic: Array<{ index: number; weight: number }> = [];
 
   for (let index = 0; index < widths.length; index++) {
-    if (noTruncate[index] || flex[index] === 0) {
+    if ((cols[index]?.noTruncate ?? false) || (cols[index]?.flex ?? 1) === 0) {
       fixedWidth += widths[index] ?? 0;
       continue;
     }
 
-    dynamic.push({ index, weight: flex[index] ?? 1 });
+    dynamic.push({ index, weight: cols[index]?.flex ?? 1 });
   }
 
   const remaining = Math.max(0, available - fixedWidth);
@@ -102,26 +107,25 @@ function fitWidths(
   return widths;
 }
 
-export function table(
-  headers: string[],
-  columns: string[][],
-  options: TableOptions = {},
+export function tableRows<T>(
+  rows: T[],
+  columns: TableColumn<T>[],
+  options: TableRowsOptions = {},
 ): void {
-  if (headers.length === 0) return;
+  if (columns.length === 0) return;
 
-  const count = headers.length;
+  const count = columns.length;
   const gap = 2;
-  const rows = columns.reduce((max, column) => Math.max(max, column.length), 0);
-  const visibleRows = Math.min(rows, options.maxRows ?? rows);
+  const visibleRows = Math.min(rows.length, options.maxRows ?? rows.length);
 
   const natural: number[] = [];
 
   for (let col = 0; col < count; col++) {
-    const headerWidth = clean(headers[col] ?? "").length;
+    const headerWidth = clean(columns[col]?.header ?? "").length;
     let width = headerWidth;
 
     for (let row = 0; row < visibleRows; row++) {
-      const value = clean(columns[col]?.[row] ?? "");
+      const value = clean(columns[col]?.value(rows[row]!, row) ?? "");
       width = Math.max(width, value.length);
     }
 
@@ -135,13 +139,17 @@ export function table(
   const widths = fitWidths(
     natural,
     available,
-    options.flex ?? [],
-    options.noTruncate ?? [],
+    columns.map((column) => ({
+      flex: column.flex ?? 1,
+      noTruncate: column.noTruncate ?? false,
+    })),
   );
 
-  const header = headers
+  const header = columns
     .map((title, col) =>
-      truncateMiddle(clean(title), widths[col] ?? 0).padEnd(widths[col] ?? 0),
+      truncateMiddle(clean(title.header), widths[col] ?? 0).padEnd(
+        widths[col] ?? 0,
+      ),
     )
     .join("  ");
 
@@ -152,13 +160,13 @@ export function table(
 
     for (let col = 0; col < count; col++) {
       const width = widths[col] ?? 0;
-      const source = clean(columns[col]?.[row] ?? "");
-      const mode = options.truncate?.[col] ?? "middle";
-      const value = options.noTruncate?.[col]
+      const source = clean(columns[col]?.value(rows[row]!, row) ?? "");
+      const mode = columns[col]?.truncate ?? "middle";
+      const value = columns[col]?.noTruncate
         ? source
         : truncate(source, width, mode);
       const padded = width > 0 ? value.padEnd(width) : value;
-      const formatted = options.format?.[col]?.(padded, row, col) ?? padded;
+      const formatted = columns[col]?.format?.(padded, row, col) ?? padded;
 
       cells.push(formatted);
     }
@@ -166,7 +174,7 @@ export function table(
     process.stdout.write(`${cells.join("  ")}\n`);
   }
 
-  if (rows > visibleRows) {
+  if (rows.length > visibleRows) {
     process.stdout.write(`${theme.dim("(...truncated)")}\n`);
   }
 }

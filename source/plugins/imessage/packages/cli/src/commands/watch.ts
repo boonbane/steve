@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
-import { Client, Options, type Message } from "../../index.ts";
-import { table } from "../../shared/layout.ts";
-import { defaultTheme } from "../../shared/theme.ts";
-import type { CommandDef } from "../../shared/yargs.ts";
+import { Client, Options, type Message } from "steve-plugin-imessage-core";
+import { tableRows } from "../layout.ts";
+import { defaultTheme } from "../theme.ts";
+import type { CommandDef } from "../yargs.ts";
 
 const DateFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
@@ -92,27 +92,52 @@ export namespace WatchCommand {
   }
 
   export function renderTable(message: Message): void {
-    table(
-      ["id", "chat", "time", "from", "text"],
+    tableRows(
+      [message],
       [
-        [String(message.id)],
-        [String(message.chatId)],
-        [DateFormatter.format(message.createdAt)],
-        [message.isFromMe ? "me" : message.sender || "(unknown)"],
-        [message.text],
+        {
+          id: "id",
+          header: "id",
+          value: (row) => String(row.id),
+          flex: 0,
+          noTruncate: true,
+          truncate: "end",
+          format: (value) => defaultTheme.code(value),
+        },
+        {
+          id: "chat",
+          header: "chat",
+          value: (row) => String(row.chatId),
+          flex: 0,
+          noTruncate: true,
+          truncate: "end",
+          format: (value) => defaultTheme.dim(value),
+        },
+        {
+          id: "time",
+          header: "time",
+          value: (row) => DateFormatter.format(row.createdAt),
+          flex: 0,
+          noTruncate: true,
+          truncate: "end",
+          format: (value) => defaultTheme.dim(value),
+        },
+        {
+          id: "from",
+          header: "from",
+          value: (row) => (row.isFromMe ? "me" : row.sender || "(unknown)"),
+          flex: 1,
+          truncate: "end",
+          format: (value) => defaultTheme.primary(value),
+        },
+        {
+          id: "text",
+          header: "text",
+          value: (row) => row.text,
+          flex: 2,
+          truncate: "end",
+        },
       ],
-      {
-        flex: [0, 0, 0, 1, 2],
-        noTruncate: [true, true, true, false, false],
-        truncate: ["end", "end", "end", "end", "end"],
-        format: [
-          (value) => defaultTheme.code(value),
-          (value) => defaultTheme.dim(value),
-          (value) => defaultTheme.dim(value),
-          (value) => defaultTheme.primary(value),
-          (value) => value,
-        ],
-      },
     );
   }
 }

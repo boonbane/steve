@@ -82,7 +82,6 @@ export namespace App {
       validator("json", PromptInput),
       async (c) => {
         const input = c.req.valid("json");
-        logger.info(`prompt text ${input.text}`);
         const message = await Message.add(input.text);
         const client = await Agent.client();
         const output = await Timer.run("agent response", () =>

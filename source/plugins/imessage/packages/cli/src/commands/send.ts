@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
-import { Client, Options } from "../../index.ts";
-import { defaultTheme } from "../../shared/theme.ts";
-import type { CommandDef } from "../../shared/yargs.ts";
+import { Client, Options } from "steve-plugin-imessage-core";
+import { defaultTheme } from "../theme.ts";
+import type { CommandDef } from "../yargs.ts";
 
 const Args = z.object({
   chatId: z.number().int().nonnegative(),

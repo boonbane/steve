@@ -51,7 +51,7 @@ const promptSystem: CommandDef = {
   handler: async (argv) => {
     const { Prompt } = await import("@steve/core");
     const text = typeof argv.text === "string" ? argv.text : "";
-    const result = await Prompt.system({
+    const result = Prompt.system({
       "steve.prompt": text,
     });
     process.stdout.write(`${result}\n`);
@@ -70,7 +70,7 @@ const promptTask: CommandDef = {
   handler: async (argv) => {
     const { Prompt } = await import("@steve/core");
     const task = String(argv.task);
-    const result = await Prompt.task(task);
+    const result = Prompt.task(task);
     process.stdout.write(`${result}\n`);
   },
 };

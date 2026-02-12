@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { build, type CliDef } from "../shared/yargs.ts";
+import { build, type CliDef } from "./yargs.ts";
 import { chats, history, send, watch } from "./commands/index.ts";
 
 export namespace IMsgCli {

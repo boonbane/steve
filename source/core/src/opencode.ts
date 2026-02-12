@@ -2,25 +2,27 @@ import {
   createOpencode,
   createOpencodeClient,
   type OpencodeClient,
+  type Config,
 } from "@opencode-ai/sdk/v2";
 import { App } from "./db.ts";
 import { Context } from "./context.ts";
+import { logger } from "./context.ts";
 
 const HOST = "127.0.0.1";
-const KEY = "opencode.port";
+const PORT_KEY = "opencode.port";
 const MIN = 43100;
 const MAX = 43120;
 
 type StartInput = Parameters<typeof createOpencode>[0];
 type Started = Awaited<ReturnType<typeof createOpencode>>;
 
-type Deps = {
+type ServerInterface = {
   start: (input: StartInput) => Promise<Started>;
   client: (input: { baseUrl: string }) => OpencodeClient;
   health: (url: string) => Promise<boolean>;
 };
 
-const defaults: Deps = {
+const defaultServer: ServerInterface = {
   start: createOpencode,
   client: createOpencodeClient,
   health: async (url) => {
@@ -38,7 +40,8 @@ const defaults: Deps = {
   },
 };
 
-let deps: Deps = defaults;
+let server: ServerInterface = defaultServer;
+let eventLogger: Promise<void> | undefined;
 
 function toUrl(port: number): string {
   return `http://${HOST}:${port}`;
@@ -69,69 +72,101 @@ export namespace Opencode {
 
   export async function load(): Promise<Resolved> {
     const dir = Context.dirs();
-    const plugin = new URL("./plugin/plugin.ts", import.meta.url).href;
-    const saved = await App.get(KEY).then(parsePort);
+    const plugin = new URL("./plugin/steve.ts", import.meta.url).href;
+    const saved = await App.get(PORT_KEY).then(parsePort);
     const errors: string[] = [];
 
     if (saved !== undefined) {
       const url = toUrl(saved);
-      const healthy = await deps.health(url);
+      const healthy = await server.health(url);
       if (healthy) {
         return {
-          client: deps.client({ baseUrl: url }),
+          client: server.client({ baseUrl: url }),
           url,
           close: () => {},
         };
       }
     }
 
+    const config: Config = {
+      plugin: [plugin],
+    };
+    logger.info(config, "Resolved Opencode config");
+
     for (const port of ports(saved)) {
-      const runtime = await deps
+      const runtime = await server
         .start({
           hostname: HOST,
           port,
           timeout: 5000,
-          config: {
-            permission: "allow",
-            plugin: [plugin],
-          },
+          config,
         })
         .catch((error) => {
           errors.push(String(error));
           return undefined;
         });
-      if (!runtime) continue;
 
-      const found = parsePort(String(new URL(runtime.server.url).port)) ?? port;
-      const persisted = await App.set(KEY, String(found))
-        .then(() => true)
-        .catch(() => false);
-      if (!persisted) {
-        runtime.server.close();
-        throw new Error(`Failed to persist opencode port ${found}`);
+      if (runtime) {
+        const url = new URL(runtime.server.url);
+        App.set(PORT_KEY, url.port);
+
+        return {
+          client: runtime.client,
+          url: runtime.server.url,
+          close: runtime.server.close,
+        };
       }
-
-      return {
-        client: runtime.client,
-        url: runtime.server.url,
-        close: runtime.server.close,
-      };
     }
 
-    const error = errors.at(-1);
-    throw new Error(
-      `Failed to start opencode on ports ${MIN}-${MAX} (data: ${dir.data})${error ? `, last error: ${error}` : ""}`,
+    logger.error(
+      {
+        min: MIN,
+        max: MAX,
+        dir: dir.data,
+        error: errors.at(-1),
+      },
+      "Failed to start opencode server",
     );
+
+    throw new Error("Failed to start opencode server");
   }
 
-  export function override(values: Partial<Deps>) {
-    deps = {
-      ...deps,
+  export function log() {
+    if (eventLogger) return;
+
+    const next = Context.opencode()
+      .then((runtime) => runtime.client.event.subscribe())
+      .then(async (events) => {
+        for await (const event of events.stream) {
+          logger.info(
+            {
+              kind: event.type,
+              timestamp: Date.now(),
+            },
+            "opencode event",
+          );
+        }
+      })
+      .catch((error) => {
+        logger.warn({ error: String(error) }, "opencode event logging stopped");
+      });
+
+    eventLogger = next;
+    void next.finally(() => {
+      if (eventLogger !== next) return;
+      eventLogger = undefined;
+    });
+  }
+
+  export function override(values: Partial<ServerInterface>) {
+    server = {
+      ...server,
       ...values,
     };
   }
 
   export function reset() {
-    deps = defaults;
+    eventLogger = undefined;
+    server = defaultServer;
   }
 }

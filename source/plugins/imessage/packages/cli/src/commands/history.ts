@@ -1,16 +1,21 @@
 import { z } from "zod/v4";
-import { Client, Options, type Message } from "../../index.ts";
-import { table } from "../../shared/layout.ts";
-import { defaultTheme } from "../../shared/theme.ts";
-import type { CommandDef } from "../../shared/yargs.ts";
+import { Client, Options, type Message } from "steve-plugin-imessage-core";
+import { ContactLookup } from "../contacts.ts";
+import { tableRows } from "../layout.ts";
+import { defaultTheme } from "../theme.ts";
+import type { CommandDef } from "../yargs.ts";
 
-const DateFormatter = new Intl.DateTimeFormat("en-US", {
+const DayFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
+});
+
+const TimeFormatter = new Intl.DateTimeFormat("en-US", {
   hour: "2-digit",
   minute: "2-digit",
   second: "2-digit",
+  hour12: false,
 });
 
 const Args = z.object({
@@ -68,30 +73,65 @@ export namespace HistoryCommand {
   }
 
   export function renderTable(messages: Message[]): void {
-    table(
-      ["id", "time", "from", "service", "text"],
-      [
-        messages.map((message) => String(message.id)),
-        messages.map((message) => DateFormatter.format(message.createdAt)),
-        messages.map((message) =>
-          message.isFromMe ? "me" : message.sender || "(unknown)",
-        ),
-        messages.map((message) => message.service),
-        messages.map((message) => message.text),
-      ],
-      {
-        flex: [0, 0, 1, 0, 2],
-        noTruncate: [true, true, false, true, false],
-        truncate: ["end", "end", "end", "end", "end"],
-        format: [
-          (value) => defaultTheme.code(value),
-          (value) => defaultTheme.dim(value),
-          (value) => defaultTheme.primary(value),
-          (value) => defaultTheme.dim(value),
-          (value) => value,
-        ],
-      },
+    const names = ContactLookup.resolve(
+      messages.map((message) => message.sender),
     );
+
+    tableRows(messages, [
+      {
+        id: "id",
+        header: "id",
+        value: (message) => String(message.id),
+        flex: 0,
+        noTruncate: true,
+        truncate: "end",
+        format: (value) => defaultTheme.code(value),
+      },
+      {
+        id: "day",
+        header: "day",
+        value: (message) => DayFormatter.format(message.createdAt),
+        flex: 0,
+        noTruncate: true,
+        truncate: "end",
+        format: (value) => defaultTheme.dim(value),
+      },
+      {
+        id: "time",
+        header: "time",
+        value: (message) => TimeFormatter.format(message.createdAt),
+        flex: 0,
+        noTruncate: true,
+        truncate: "end",
+        format: (value) => defaultTheme.dim(value),
+      },
+      {
+        id: "from",
+        header: "from",
+        value: (message) => {
+          if (message.isFromMe) {
+            return "me";
+          }
+
+          const name = ContactLookup.label(message.sender, names);
+          if (name.length > 0) {
+            return name;
+          }
+
+          return "(unknown)";
+        },
+        flex: 1,
+        truncate: "end",
+        format: (value) => defaultTheme.white(value),
+      },
+      {
+        id: "text",
+        header: "text",
+        value: (message) => message.text,
+        flex: 2,
+        truncate: "end",
+      },
+    ]);
   }
 }
 

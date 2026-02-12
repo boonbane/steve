@@ -48,3 +48,5 @@ xcuserdata/
 .spall
 docs/agents
 .llm
+plugins/imessage/src/native/.build/index-build
+source/plugins/imessage/packages/core/native/.build/index-build

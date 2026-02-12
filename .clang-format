@@ -5,3 +5,4 @@ TabWidth: 2
 UseTab: Never
 DerivePointerAlignment: false
 PointerAlignment: Left
+AllowShortIfStatementsOnASingleLine: WithoutElse

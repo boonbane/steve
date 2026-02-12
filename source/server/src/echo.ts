@@ -30,7 +30,7 @@ export namespace Echo {
     return {
       message: input.message,
       reply: result.text,
-      sessionID: result.sessionID,
+      sessionID: result.session,
       opencodeURL,
       length: input.message.length,
       timestamp: Date.now(),

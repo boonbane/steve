@@ -1,3 +1,4 @@
+import fs from "fs";
 import { Context } from "./context.ts";
 import { Skill } from "./skill.ts";
 import { Task } from "./task.ts";
@@ -11,17 +12,16 @@ const defaults: Record<string, string> = {
   "task-missing": taskMissing,
 };
 
-async function render(
-  template: string,
-  vars: Record<string, string> = {},
-): Promise<string> {
-  const data = { ...(await builtins()), ...vars };
+function render(template: string, vars: Record<string, string> = {}): string {
+  const data = { ...builtins(), ...vars };
   let result = template;
   for (const [key, value] of Object.entries(data)) {
     result = result.replaceAll(`{{${key}}}`, value);
   }
   return result;
 }
+
+//const prompt = (name: string) =>
 
 function formatSkills(skills: Skill.List): string {
   return Object.values(skills)
@@ -44,22 +44,20 @@ function formatTaskSkills(skills: Skill.Resolved[]): string {
     .join("\n\n");
 }
 
-async function builtins(): Promise<Record<string, string>> {
-  const skills = await Context.skills();
-  const tasks = await Context.tasks();
+function builtins(): Record<string, string> {
   return {
-    "steve.skills": formatSkills(skills),
-    "steve.tasks": formatTasks(tasks),
+    "steve.skills": formatSkills(Context.skills()),
+    "steve.tasks": formatTasks(Context.tasks()),
     "steve.prompt": "",
   };
 }
 
-async function getTemplate(name: string): Promise<string> {
-  const dirs = await Context.dirs();
+function getTemplate(name: string): string {
+  const dirs = Context.dirs();
 
-  const override = Bun.file(dirs.prompt(name));
-  if (await override.exists()) {
-    return override.text();
+  const override = dirs.prompt(name);
+  if (fs.existsSync(override)) {
+    return fs.readFileSync(override, "utf8");
   }
 
   const builtin = defaults[name];
@@ -71,29 +69,27 @@ async function getTemplate(name: string): Promise<string> {
 }
 
 export namespace Prompt {
-  export async function system(vars?: Record<string, string>): Promise<string> {
-    const template = await getTemplate("system");
+  export function system(vars?: Record<string, string>): string {
+    const template = getTemplate("system");
     return render(template, vars);
   }
 
-  export async function task(name: string): Promise<string> {
-    const task = await Task.get(name);
+  export function task(name: string): string {
+    const task = Task.get(name);
     if (!task) {
-      const template = await getTemplate("task-missing");
+      const template = getTemplate("task-missing");
       return render(template, {
         "steve.task.name": name,
       });
     }
 
-    const skills = await Promise.all(
-      task.metadata.skills.map((name) => Skill.get(name)),
-    );
+    const skills = task.metadata.skills.map((name) => Skill.get(name));
     const list = skills.filter((skill) => skill !== undefined);
     const missing = task.metadata.skills.filter(
       (name) => !list.some((skill) => skill.metadata.name === name),
     );
 
-    const template = await getTemplate("task");
+    const template = getTemplate("task");
     return render(template, {
       "steve.task.name": task.metadata.name,
       "steve.task.description": task.metadata.description,

@@ -5,6 +5,8 @@
       "name": "steve",
       "dependencies": {
         "@node-whisper-cpp/mac-arm64-metal": ".cache/whisper/npm/@node-whisper-cpp/mac-arm64-metal/node-whisper-cpp-mac-arm64-metal-0.0.1.tgz",
+        "@opencode-ai/plugin": "catalog:",
+        "@opencode-ai/sdk": "catalog:",
         "node-whisper-cpp": ".cache/whisper/npm/node-whisper-cpp/node-whisper-cpp-0.0.1.tgz",
         "pino": "^10.3.1",
         "pino-pretty": "^13.1.3",
@@ -15,33 +17,6 @@
         "@types/bun": "catalog:",
         "prettier": "catalog:",
         "typescript": "catalog:",
-      },
-    },
-    "plugins/imessage": {
-      "name": "steve-plugin-imessage",
-      "version": "0.0.1",
-      "bin": {
-        "imessage": "src/cli/index.ts",
-      },
-      "dependencies": {
-        "picocolors": "^1.1.1",
-        "yargs": "catalog:",
-        "zod": "catalog:",
-      },
-      "devDependencies": {
-        "@types/bun": "catalog:",
-        "@types/yargs": "catalog:",
-      },
-    },
-    "plugins/web": {
-      "name": "steve-plugin-web-interface",
-      "version": "0.0.1",
-      "dependencies": {
-        "@steve/sdk": "workspace:*",
-        "consola": "catalog:",
-      },
-      "devDependencies": {
-        "@types/bun": "catalog:",
       },
     },
     "source/cli": {
@@ -67,7 +42,6 @@
       "version": "0.0.1",
       "dependencies": {
         "@opencode-ai/sdk": "catalog:",
-        "consola": "catalog:",
         "node-whisper-cpp": "catalog:",
         "zod": "catalog:",
       },
@@ -75,15 +49,44 @@
         "@types/bun": "catalog:",
       },
     },
+    "source/plugins/imessage/packages/cli": {
+      "name": "steve-plugin-imessage-cli",
+      "version": "0.0.1",
+      "bin": {
+        "imessage": "src/index.ts",
+      },
+      "dependencies": {
+        "picocolors": "^1.1.1",
+        "steve-plugin-imessage-core": "workspace:*",
+        "yargs": "catalog:",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@types/bun": "catalog:",
+        "@types/yargs": "catalog:",
+      },
+    },
+    "source/plugins/imessage/packages/core": {
+      "name": "steve-plugin-imessage-core",
+      "version": "0.0.1",
+      "dependencies": {
+        "yargs": "catalog:",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@types/bun": "catalog:",
+        "@types/yargs": "catalog:",
+      },
+    },
     "source/sdk": {
       "name": "@steve/sdk",
       "version": "0.0.1",
       "dependencies": {
         "@hey-api/client-fetch": "^0.10.0",
-        "consola": "catalog:",
       },
       "devDependencies": {
         "@hey-api/openapi-ts": "^0.90.10",
+        "@steve/core": "workspace:*",
         "@steve/server": "workspace:*",
         "@types/bun": "catalog:",
       },
@@ -96,7 +99,6 @@
         "@standard-community/standard-json": "catalog:",
         "@standard-community/standard-openapi": "catalog:",
         "@steve/core": "workspace:*",
-        "consola": "catalog:",
         "hono": "catalog:",
         "hono-openapi": "catalog:",
         "node-whisper-cpp": "catalog:",
@@ -110,7 +112,8 @@
   },
   "catalog": {
     "@hono/standard-validator": "^0.2.2",
-    "@opencode-ai/sdk": "^1.1.53",
+    "@opencode-ai/plugin": "^1.1.60",
+    "@opencode-ai/sdk": "^1.1.60",
     "@standard-community/standard-json": "^0.3.5",
     "@standard-community/standard-openapi": "^0.2.9",
     "@tsconfig/bun": "1.0.10",
@@ -142,7 +145,9 @@
 
     "@node-whisper-cpp/mac-arm64-metal": ["@node-whisper-cpp/mac-arm64-metal@.cache/whisper/npm/@node-whisper-cpp/mac-arm64-metal/node-whisper-cpp-mac-arm64-metal-0.0.1.tgz", {}],
 
-    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.1.53", "", {}, "sha512-RUIVnPOP1CyyU32FrOOYuE7Ge51lOBuhaFp2NSX98ncApT7ffoNetmwzqrhOiJQgZB1KrbCHLYOCK6AZfacxag=="],
+    "@opencode-ai/plugin": ["@opencode-ai/plugin@1.1.60", "", { "dependencies": { "@opencode-ai/sdk": "1.1.60", "zod": "4.1.8" } }, "sha512-/lCaBZPczRt6znMGF8rFwJbfFo1hHIy+fQXASKCTEpxNX7JISYCWPhchdxAv6HZ+r0CZGORGFG5CWcnFvGQAZQ=="],
+
+    "@opencode-ai/sdk": ["@opencode-ai/sdk@1.1.60", "", {}, "sha512-RVbQQCXLr1yXCYnlYiIF0t4lMUPCh4x2EU/FfvnfiDaBAwKOoIvQUjZd+AXSpjbConum6Wa2PzV65waFhtix1w=="],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 
@@ -332,9 +337,9 @@
 
     "split2": ["split2@4.2.0", "", {}, "sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg=="],
 
-    "steve-plugin-imessage": ["steve-plugin-imessage@workspace:plugins/imessage"],
+    "steve-plugin-imessage-cli": ["steve-plugin-imessage-cli@workspace:source/plugins/imessage/packages/cli"],
 
-    "steve-plugin-web-interface": ["steve-plugin-web-interface@workspace:plugins/web"],
+    "steve-plugin-imessage-core": ["steve-plugin-imessage-core@workspace:source/plugins/imessage/packages/core"],
 
     "string-width": ["string-width@7.2.0", "", { "dependencies": { "emoji-regex": "^10.3.0", "get-east-asian-width": "^1.0.0", "strip-ansi": "^7.1.0" } }, "sha512-tsaTIkKW9b4N+AEj+SVA+WhJzV7/zMhcSu78mLKWSk7cXMOSHsBKFWUs0fWwq8QyK3MgJBQRX6Gbi4kYbdvGkQ=="],
 
@@ -365,6 +370,8 @@
     "zod": ["zod@4.3.6", "", {}, "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="],
 
     "zod-openapi": ["zod-openapi@4.2.4", "", { "peerDependencies": { "zod": "^3.21.4" } }, "sha512-tsrQpbpqFCXqVXUzi3TPwFhuMtLN3oNZobOtYnK6/5VkXsNdnIgyNr4r8no4wmYluaxzN3F7iS+8xCW8BmMQ8g=="],
+
+    "@opencode-ai/plugin/zod": ["zod@4.1.8", "", {}, "sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ=="],
 
     "@steve/core/node-whisper-cpp": ["node-whisper-cpp@0.0.0", "", {}, "sha512-fFu4Ut0zlS0KRNRtxqOJ00DYnrYPys29TUZDVPOob49KoqLC2u6HL2+YnRUF3AGTVzxeoaIwAOuRcOFI/gY3OQ=="],
 

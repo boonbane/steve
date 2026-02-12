@@ -71,7 +71,7 @@ async function makeDb(): Promise<{ dir: string; dbPath: string }> {
 
   db.run(
     "INSERT INTO chat(ROWID, chat_identifier, guid, display_name, service_name) VALUES (?1, ?2, ?3, ?4, ?5)",
-    [1, "iMessage;+;chat123", "iMessage;+;chat123", "Friends", "iMessage"],
+    [1, "+15551234567", "iMessage;+;chat123", "Friends", "iMessage"],
   );
 
   db.run("INSERT INTO handle(ROWID, id) VALUES (?1, ?2)", [1, "+15551234567"]);
@@ -118,7 +118,8 @@ describe("imessage cli", () => {
     await fs.promises.rm(dir, { recursive: true, force: true });
 
     expect(code).toBe(0);
-    expect(out).toContain("identifier");
+    expect(out).toContain("service");
+    expect(out).not.toContain("identifier");
     expect(out).toContain("Friends");
   });
 
@@ -140,7 +141,9 @@ describe("imessage cli", () => {
     await fs.promises.rm(dir, { recursive: true, force: true });
 
     expect(code).toBe(0);
-    expect(out).toContain("service");
+    expect(out).toContain("day");
+    expect(out).toContain("time");
+    expect(out).not.toContain("service");
     expect(out).toContain("hello");
   });
 

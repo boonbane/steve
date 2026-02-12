@@ -1,6 +1,6 @@
 import path from "path";
 import pino from "pino";
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { Opencode as OpencodeModule } from "./opencode.ts";
 import { Database } from "bun:sqlite";
 import type { Context as WhisperContext } from "node-whisper-cpp";
 import { Config } from "./config.ts";
@@ -11,11 +11,7 @@ import { Task } from "./task.ts";
 import { Wav } from "./wav.ts";
 
 export namespace Context {
-  export interface Opencode {
-    client: OpencodeClient;
-    url: string;
-    close: () => void;
-  }
+  export type Opencode = OpencodeModule.Resolved;
 
   export interface Dirs {
     logs: string;
@@ -105,9 +101,9 @@ export namespace Context {
             options: {
               colorize: true,
             },
-          }
-        ]
-      })
+          },
+        ],
+      });
 
       store.logger = pino(transport);
     }
@@ -115,16 +111,24 @@ export namespace Context {
     return store.logger;
   }
 
-  export async function skills(): Promise<Skill.List> {
+  export function skills(): Skill.List {
     if (store.skills) return store.skills;
-    store.skills = await Skill.load();
+    store.skills = Skill.load();
     return store.skills;
   }
 
-  export async function tasks(): Promise<Task.List> {
+  export function tasks(): Task.List {
     if (store.tasks) return store.tasks;
-    store.tasks = await Task.load();
+    store.tasks = Task.load();
     return store.tasks;
+  }
+
+  export function preload() {
+    config();
+    dirs();
+    skills();
+    tasks();
+    opencode();
   }
 
   export async function db(): Promise<Database> {
