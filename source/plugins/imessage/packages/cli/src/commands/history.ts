@@ -21,6 +21,7 @@ const TimeFormatter = new Intl.DateTimeFormat("en-US", {
 const Args = z.object({
   chatId: z.number().int().nonnegative(),
   limit: z.number().int().positive().default(50),
+  reverse: z.boolean().default(false),
   db: z.string().default(Options.parse({}).dbPath),
 });
 
@@ -40,6 +41,12 @@ export namespace HistoryCommand {
       description: "Maximum number of messages to list",
       default: 50,
     },
+    reverse: {
+      alias: "r",
+      type: "boolean",
+      description: "Show messages in reverse chronological order",
+      default: false,
+    },
     db: {
       alias: "d",
       type: "string",
@@ -52,6 +59,7 @@ export namespace HistoryCommand {
     const args = Args.parse({
       chatId: typeof argv.chatId === "number" ? argv.chatId : undefined,
       limit: typeof argv.limit === "number" ? argv.limit : undefined,
+      reverse: typeof argv.reverse === "boolean" ? argv.reverse : undefined,
       db: typeof argv.db === "string" ? argv.db : undefined,
     });
 
@@ -59,7 +67,7 @@ export namespace HistoryCommand {
     let messages: Message[] = [];
 
     try {
-      messages = client.history(args.chatId, args.limit);
+      messages = client.history(args.chatId, args.limit, args.reverse);
     } finally {
       client.close();
     }

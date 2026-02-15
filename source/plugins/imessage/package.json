@@ -4,7 +4,8 @@
   "type": "module",
   "workspaces": [
     "packages/core",
-    "packages/cli"
+    "packages/cli",
+    "packages/chart"
   ],
   "scripts": {
     "test": "bun test --cwd packages/core && bun test --cwd packages/cli",

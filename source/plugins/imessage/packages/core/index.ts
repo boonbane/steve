@@ -93,7 +93,7 @@ export type Options = z.infer<typeof Options>;
 export interface IClient {
   list(limit?: number): Chat[];
   send(chatId: number, text: string): void;
-  history(chatId: number, limit?: number): Message[];
+  history(chatId: number, limit?: number, reverse?: boolean): Message[];
   subscribe(fn: Subscriber): () => void;
   close(): void;
 }
@@ -383,7 +383,11 @@ class SQLiteClient implements IClient {
     });
   }
 
-  history(chatId: number, limit = DEFAULT_HISTORY_LIMIT): Message[] {
+  history(
+    chatId: number,
+    limit = DEFAULT_HISTORY_LIMIT,
+    reverse = false,
+  ): Message[] {
     const id = ChatID.parse(chatId);
     const count = parseLimit(limit, DEFAULT_HISTORY_LIMIT);
     const bodyColumn = this.hasAttributedBody ? "m.attributedBody" : "NULL";
@@ -393,6 +397,7 @@ class SQLiteClient implements IClient {
     const reactionFilter = this.hasAssociatedMessageType
       ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
       : "";
+    const order = reverse ? "ASC" : "DESC";
     const rows = this.db
       .query(
         `
@@ -410,7 +415,7 @@ class SQLiteClient implements IClient {
           JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
           LEFT JOIN handle h ON m.handle_id = h.ROWID
           WHERE cmj.chat_id = ?1${reactionFilter}
-          ORDER BY m.date DESC
+          ORDER BY m.date ${order}
           LIMIT ?2
         `,
       )
