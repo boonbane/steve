@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@steve/core": "workspace:*",
-    "node-whisper-cpp": "catalog:",
+    "@spader/node-whisper-cpp": "catalog:",
     "@hono/standard-validator": "catalog:",
     "@standard-community/standard-json": "catalog:",
     "@standard-community/standard-openapi": "catalog:",

@@ -3,7 +3,7 @@ import {
   createContext,
   type Context as WhisperContext,
   type Segment,
-} from "node-whisper-cpp";
+} from "@spader/node-whisper-cpp";
 
 export namespace Wav {
   export interface Header {

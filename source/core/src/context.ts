@@ -2,7 +2,7 @@ import path from "path";
 import pino from "pino";
 import type { Opencode as OpencodeModule } from "./opencode.ts";
 import { Database } from "bun:sqlite";
-import type { Context as WhisperContext } from "node-whisper-cpp";
+import type { Context as WhisperContext } from "@spader/node-whisper-cpp";
 import { Config } from "./config.ts";
 import { DB } from "./db.ts";
 import { Opencode } from "./opencode.ts";

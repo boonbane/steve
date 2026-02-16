@@ -26,7 +26,7 @@
       "yargs": "^18.0.0",
       "@types/yargs": "^17.0.33",
       "zod": "^4.3.6",
-      "node-whisper-cpp": "*"
+      "@spader/node-whisper-cpp": "^0.2.2"
     }
   },
   "scripts": {
@@ -43,8 +43,6 @@
     "typescript": "catalog:"
   },
   "dependencies": {
-    "@node-whisper-cpp/mac-arm64-metal": ".cache/whisper/npm/@node-whisper-cpp/mac-arm64-metal/node-whisper-cpp-mac-arm64-metal-0.0.1.tgz",
-    "node-whisper-cpp": ".cache/whisper/npm/node-whisper-cpp/node-whisper-cpp-0.0.1.tgz",
     "@opencode-ai/sdk": "catalog:",
     "@opencode-ai/plugin": "catalog:",
     "pino": "^10.3.1",
