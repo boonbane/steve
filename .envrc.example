@@ -1,0 +1,26 @@
+export CLOUDFLARE_API_TOKEN=
+export CLOUDFLARE_ACCOUNT_ID=
+
+export ENVIRONMENT=dev
+
+export RELAY_URL=https://[url].[org].workers.dev
+export DEMO_URL=https://[url].[org].workers.dev
+export RELAY_CORS_ORIGIN=$DEMO_URL
+export RELAY_AUTH_ISSUER=https://[url].[org].workers.dev
+export DEMO_CLERK_PUBLISHABLE_KEY=
+
+export STEVE_URL=http://localhost:1977
+export STEVE_DAEMON_TOKEN=
+
+export TF_VAR_cloudflare_api_token=$CLOUDFLARE_API_TOKEN
+export TF_VAR_cloudflare_account_id=$CLOUDFLARE_ACCOUNT_ID
+export TF_VAR_environment=$ENVIRONMENT
+export TF_VAR_RELAY_URL=$RELAY_URL
+export TF_VAR_RELAY_CORS_ORIGIN=$RELAY_CORS_ORIGIN
+export TF_VAR_RELAY_AUTH_ISSUER=$RELAY_AUTH_ISSUER
+export TF_VAR_DEMO_CLERK_PUBLISHABLE_KEY=$DEMO_CLERK_PUBLISHABLE_KEY
+
+# Optional local testing override (uncomment both)
+# export RELAY_URL=http://127.0.0.1:8787
+# export TF_VAR_RELAY_URL=$RELAY_URL
+# export AUTH_URL=

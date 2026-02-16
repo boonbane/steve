@@ -1,0 +1,40 @@
+{
+  "name": "steve-relay",
+  "main": "src/clerk.ts",
+  "compatibility_date": "2025-02-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RELAY",
+        "class_name": "RelayDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RelayDO"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "AUTH",
+      "service": "steve-auth"
+    }
+  ],
+  "vars": {
+    "AUTH_ISSUER": "${RELAY_AUTH_ISSUER}",
+    "CORS_ORIGIN": "${RELAY_CORS_ORIGIN}"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
+  }
+}

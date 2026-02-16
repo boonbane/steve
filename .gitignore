@@ -50,3 +50,9 @@ docs/agents
 .llm
 plugins/imessage/src/native/.build/index-build
 source/plugins/imessage/packages/core/native/.build/index-build
+.wrangler
+.terraform
+.envrc
+.dev.vars
+infra/terraform.tfstate*
+**/wrangler.jsonc
