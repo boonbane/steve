@@ -53,15 +53,19 @@ const indexHtml = `<!doctype html>
     </style>
   </head>
   <body>
-    <h2>Relay Clerk Demo</h2>
-    <p>Sign in with Clerk, then start your daemon with <code>STEVE_DAEMON_TOKEN</code>.</p>
+    <h2>Steve Relay Demo</h2>
+    <p>Sign in, then start your daemon by exporting <code>STEVE_DAEMON_TOKEN</code> to the returned token, running <code>steved</code>, and then running <code>steve serve</code></p>
     <div id="auth"></div>
-    <div id="status">Loading Clerk...</div>
+    <div id="status">Loading...</div>
     <div id="actions" hidden>
-      <button id="hello">GET /hello</button>
+      <button id="health">GET /health</button>
       <button id="echo">POST /echo</button>
       <button id="signout">Sign out</button>
     </div>
+    <form id="prompt-form" hidden>
+      <input id="prompt-input" type="text" placeholder="Say something to Steve" style="min-width:280px;padding:0.45rem;" />
+      <button id="prompt-submit" type="submit">POST /prompt</button>
+    </form>
     <div id="output">Waiting for request...</div>
     <div id="daemon-token">Daemon token not issued yet.</div>
     <script src="/config.js"></script>
@@ -73,15 +77,8 @@ const appJs = `import { Clerk } from "https://esm.sh/@clerk/clerk-js@5";
 
 const config = globalThis.__RELAY_DEMO_CONFIG || {};
 
-const storedRelayUrl = localStorage.getItem("relay_url");
-const relayUrl = storedRelayUrl && storedRelayUrl !== "null"
-  ? storedRelayUrl
-  : (config.relayUrl || prompt("Relay URL (https://...)") || "");
-
-const storedPk = localStorage.getItem("clerk_pk");
-const publishableKey = storedPk && storedPk !== "null"
-  ? storedPk
-  : (config.publishableKey || prompt("Clerk publishable key (pk_...)"));
+const relayUrl = config.relayUrl || prompt("Relay URL (https://...)") || "";
+const publishableKey = config.publishableKey || prompt("Clerk publishable key (pk_...)");
 
 if (!publishableKey) {
   document.getElementById("status").textContent = "Missing publishable key.";
@@ -93,14 +90,13 @@ if (!relayUrl) {
   throw new Error("Missing relay URL");
 }
 
-localStorage.setItem("relay_url", relayUrl);
-localStorage.setItem("clerk_pk", publishableKey);
-
 const status = document.getElementById("status");
 const authDiv = document.getElementById("auth");
 const actions = document.getElementById("actions");
+const promptForm = document.getElementById("prompt-form");
 const output = document.getElementById("output");
 const daemonTokenDiv = document.getElementById("daemon-token");
+let authMount = null;
 
 const DAEMON_TOKEN_KEY = "steve_daemon_token";
 const DAEMON_USER_KEY = "steve_daemon_user";
@@ -108,6 +104,34 @@ const DAEMON_EXP_KEY = "steve_daemon_exp";
 
 const clerk = new Clerk(publishableKey);
 await clerk.load();
+
+function unmountAuth() {
+  if (authMount === "signin") {
+    clerk.unmountSignIn(authDiv);
+  }
+  if (authMount === "userbutton") {
+    clerk.unmountUserButton(authDiv);
+  }
+  authMount = null;
+}
+
+function mountSignIn() {
+  if (authMount === "signin") {
+    return;
+  }
+  unmountAuth();
+  clerk.mountSignIn(authDiv);
+  authMount = "signin";
+}
+
+function mountUserButton() {
+  if (authMount === "userbutton") {
+    return;
+  }
+  unmountAuth();
+  clerk.mountUserButton(authDiv);
+  authMount = "userbutton";
+}
 
 function renderDaemonToken() {
   const token = localStorage.getItem(DAEMON_TOKEN_KEY);
@@ -162,18 +186,18 @@ async function registerDaemonToken() {
 }
 
 async function render() {
-  authDiv.innerHTML = "";
-
   if (!clerk.user || !clerk.session) {
     actions.hidden = true;
+    promptForm.hidden = true;
     status.textContent = "Signed out";
-    clerk.mountSignIn(authDiv);
+    mountSignIn();
     return;
   }
 
   actions.hidden = false;
+  promptForm.hidden = false;
   status.textContent = "Signed in as " + clerk.user.id;
-  clerk.mountUserButton(authDiv);
+  mountUserButton();
   await registerDaemonToken();
 }
 
@@ -207,8 +231,8 @@ async function callRelay(path, init) {
   );
 }
 
-document.getElementById("hello").addEventListener("click", function () {
-  callRelay("/hello");
+document.getElementById("health").addEventListener("click", function () {
+  callRelay("/health");
 });
 
 document.getElementById("echo").addEventListener("click", function () {
@@ -218,7 +242,26 @@ document.getElementById("echo").addEventListener("click", function () {
   });
 });
 
+promptForm.addEventListener("submit", function (event) {
+  event.preventDefault();
+  const input = document.getElementById("prompt-input");
+  const text = input.value.trim();
+  if (!text) {
+    output.textContent = "Prompt is empty.";
+    return;
+  }
+
+  callRelay("/prompt", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ text }),
+  });
+});
+
 document.getElementById("signout").addEventListener("click", async function () {
+  unmountAuth();
   await clerk.signOut();
   localStorage.removeItem(DAEMON_TOKEN_KEY);
   localStorage.removeItem(DAEMON_USER_KEY);
