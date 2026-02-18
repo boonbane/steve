@@ -43,8 +43,8 @@
   "scripts": {
     "clean": "bun turbo run clean && bun ./tools/clean.ts",
     "typecheck": "bun turbo run typecheck",
-    "link": "bun run --cwd packages/cli link",
-    "unlink": "bun run --cwd packages/cli unlink",
+    "link": "bun --cwd packages/cli link && bun --cwd packages/relay/daemon link",
+    "unlink": "bun --cwd packages/cli unlink && bun --cwd packages/relay/daemon unlink",
     "serve": "bun run --cwd packages/server serve",
     "format": "bun run ./tools/format.ts"
   },

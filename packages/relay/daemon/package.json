@@ -10,7 +10,9 @@
     "steved": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "link": "bun link",
+    "unlink": "bun unlink"
   },
   "dependencies": {
     "@clerk/backend": "^2.31.0",

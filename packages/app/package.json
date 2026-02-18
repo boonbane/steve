@@ -9,7 +9,8 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
-    "serve": "vite preview"
+    "serve": "vite preview",
+    "deploy": "wrangler pages deploy"
   },
   "license": "MIT",
   "devDependencies": {
