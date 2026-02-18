@@ -21,3 +21,35 @@ output "relay_generated_wrangler_config" {
 output "relay_demo_generated_wrangler_config" {
   value = local_file.relay_demo_wrangler_generated.filename
 }
+
+output "web_pages_project_name" {
+  value = cloudflare_pages_project.web.name
+}
+
+output "web_pages_subdomain" {
+  value = cloudflare_pages_project.web.subdomain
+}
+
+output "web_pages_domain" {
+  value = cloudflare_pages_domain.web.name
+}
+
+output "app_pages_project_name" {
+  value = cloudflare_pages_project.app.name
+}
+
+output "app_pages_subdomain" {
+  value = cloudflare_pages_project.app.subdomain
+}
+
+output "app_pages_domain" {
+  value = cloudflare_pages_domain.app.name
+}
+
+output "web_generated_wrangler_config" {
+  value = local_file.web_wrangler_generated.filename
+}
+
+output "app_generated_wrangler_config" {
+  value = local_file.app_wrangler_generated.filename
+}

@@ -12,6 +12,26 @@ variable "environment" {
   default = "dev"
 }
 
+variable "WEB_DOMAIN" {
+  type        = string
+  description = "Primary custom domain for website Pages project."
+}
+
+variable "APP_DOMAIN" {
+  type        = string
+  description = "Custom domain for app Pages project."
+}
+
+variable "WEB_PAGES_PROJECT_NAME" {
+  type        = string
+  description = "Cloudflare Pages project name for Astro website."
+}
+
+variable "APP_PAGES_PROJECT_NAME" {
+  type        = string
+  description = "Cloudflare Pages project name for Solid app."
+}
+
 variable "RELAY_CORS_ORIGIN" {
   type        = string
   description = "Allowed browser origin for relay CORS/auth checks."
@@ -28,7 +48,7 @@ variable "RELAY_URL" {
   sensitive   = true
 }
 
-variable "DEMO_CLERK_PUBLISHABLE_KEY" {
+variable "CLERK_PUBLISHABLE_KEY" {
   type        = string
   description = "Clerk publishable key used by the demo worker."
   sensitive   = true
