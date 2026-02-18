@@ -23,11 +23,11 @@ export namespace Format {
   };
 
   export const swift = async () => {
-    await $`swift format --configuration ${paths.child(".swift-format")} --in-place --recursive ${paths.child("source/ios")}`;
+    await $`swift format --configuration ${paths.child(".swift-format")} --in-place --recursive ${paths.child("packages/ios")}`;
   };
 
   export const ts = async () => {
-    await $`prettier --write ${paths.child("source/**/*.{ts,tsx}")} ${paths.child("*.{json,md}")}`;
+    await $`prettier --write ${paths.child("packages/**/*.{ts,tsx}")} ${paths.child("*.{json,md}")}`;
   };
 }
 

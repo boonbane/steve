@@ -1,0 +1,24 @@
+{
+  "name": "steve-plugin-imessage-cli",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "imessage": "src/index.ts"
+  },
+  "scripts": {
+    "cli": "bun src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "picocolors": "^1.1.1",
+    "steve-plugin-imessage-core": "workspace:*",
+    "yargs": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "@types/yargs": "catalog:"
+  }
+}

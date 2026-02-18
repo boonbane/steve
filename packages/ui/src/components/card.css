@@ -1,0 +1,22 @@
+[data-component="card"] {
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-lg);
+  background: var(--background-raised);
+  color: var(--text-base);
+  padding: var(--space-4);
+}
+
+[data-component="card"][data-tone="success"] {
+  background: var(--status-success-bg);
+  color: var(--status-success-text);
+}
+
+[data-component="card"][data-tone="warning"] {
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+}
+
+[data-component="card"][data-tone="error"] {
+  background: var(--status-error-bg);
+  color: var(--status-error-text);
+}

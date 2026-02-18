@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background-base: var(--background-base);
+  --color-background-raised: var(--background-raised);
+  --color-surface-muted: var(--surface-muted);
+  --color-text-base: var(--text-base);
+  --color-text-strong: var(--text-strong);
+  --color-border-base: var(--border-base);
+  --color-accent: var(--button-primary-base);
+
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+}

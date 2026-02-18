@@ -56,5 +56,5 @@ source/plugins/imessage/packages/core/native/.build/index-build
 .dev.vars
 infra/terraform.tfstate*
 **/wrangler.jsonc
-/source/app
 .vscode
+.turbo

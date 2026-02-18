@@ -1,0 +1,25 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "tasks": {
+    "clean": {
+      "cache": false
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "@steve/sdk#build": {
+      "outputs": ["src/gen/**"]
+    },
+    "@steve/app#build": {
+      "outputs": ["dist/**"]
+    },
+    "@steve/web#build": {
+      "outputs": ["dist/**"]
+    }
+  }
+}

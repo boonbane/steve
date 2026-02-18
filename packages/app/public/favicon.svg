@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="400" height="400">
+  <style>
+    :root {
+      --icon-stroke: #1a1a1a;
+      --icon-highlight: #ffffff;
+      --icon-eye-fill: #ffffff;
+      --icon-eye-stroke: #000000;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --icon-stroke: #f2f2f2;
+        --icon-highlight: #111111;
+        --icon-eye-fill: #111111;
+        --icon-eye-stroke: #f2f2f2;
+      }
+    }
+  </style>
+
+  <path d="M 148,52 C 148,10 52,10 52,52 C 52,72 70,85 100,85 C 130,85 148,98 148,118 C 148,165 52,165 52,125" fill="none" stroke="var(--icon-stroke)" stroke-width="32" stroke-linecap="round"/>
+</svg>

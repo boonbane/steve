@@ -1,0 +1,107 @@
+:root {
+  color-scheme: light;
+
+  --font-family-sans: sans-serif;
+  --font-family-mono: monospace;
+
+  --font-size-small: 13px;
+  --font-size-base: 15px;
+  --font-size-large: 18px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-16: 4rem;
+
+  --sl-color-banner-bg: var(--violet-7);
+  --sl-color-banner-border: var(--violet-6);
+  --ring: var(--neutral-8);
+  --code-background: var(--violet-3);
+  --mark-background: var(--violet-4);
+
+  --background-base: var(--neutral-0);
+  --background-raised: var(--neutral-0);
+  --surface-muted: var(--neutral-1);
+  --surface-hover: var(--neutral-1);
+
+  --text-base: var(--neutral-9);
+  --text-strong: var(--neutral-9);
+  --text-muted: var(--neutral-6);
+  --text-inverse: var(--white);
+
+  --border-base: var(--line-1);
+  --border-strong: var(--line-2);
+
+  --button-primary-base: var(--blue-5);
+  --button-primary-hover: var(--blue-6);
+  --button-primary-text: var(--white);
+
+  --button-secondary-base: var(--neutral-1);
+  --button-secondary-hover: var(--surface-muted);
+  --button-secondary-text: var(--neutral-7);
+
+  --icon-stroke: #1a1a1a;
+  --icon-highlight: #ffffff;
+  --icon-eye-fill: #ffffff;
+  --icon-eye-stroke: #000000;
+
+  --status-success-bg: var(--green-1);
+  --status-success-text: var(--green-5);
+  --status-warning-bg: var(--amber-1);
+  --status-warning-text: var(--amber-5);
+  --status-error-bg: var(--red-1);
+  --status-error-text: var(--red-5);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --sl-color-banner-bg: var(--violet-7);
+  --sl-color-banner-border: var(--violet-6);
+  --ring: var(--neutral-7);
+  --code-background: var(--violet-3);
+  --mark-background: var(--violet-4);
+
+  --background-base: var(--neutral-0);
+  --background-raised: var(--neutral-1);
+  --surface-muted: var(--neutral-2);
+  --surface-hover: var(--neutral-3);
+
+  --text-base: var(--neutral-9);
+  --text-strong: var(--neutral-9);
+  --text-muted: var(--neutral-8);
+  --text-inverse: var(--neutral-6);
+
+  --border-base: var(--line-1);
+  --border-strong: var(--line-2);
+
+  --button-primary-base: var(--blue-5);
+  --button-primary-hover: var(--blue-6);
+  --button-primary-text: var(--neutral-9);
+
+  --button-secondary-base: var(--neutral-2);
+  --button-secondary-hover: var(--neutral-3);
+  --button-secondary-text: var(--neutral-9);
+
+  --icon-stroke: #f2f2f2;
+  --icon-highlight: #111111;
+  --icon-eye-fill: #111111;
+  --icon-eye-stroke: #f2f2f2;
+
+  --status-success-bg: var(--green-1);
+  --status-success-text: var(--green-5);
+  --status-warning-bg: var(--amber-1);
+  --status-warning-text: var(--amber-5);
+  --status-error-bg: var(--red-1);
+  --status-error-text: var(--red-5);
+}
+
+:root[data-font="mono"] {
+  --font-family-sans: var(--font-family-mono);
+}

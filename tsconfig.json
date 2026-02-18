@@ -1,12 +1,18 @@
 {
   "files": [],
   "references": [
-    { "path": "plugins/imessage/packages/core" },
-    { "path": "plugins/imessage/packages/cli" },
-    { "path": "plugins/web" },
-    { "path": "source/core" },
-    { "path": "source/server" },
-    { "path": "source/sdk" },
-    { "path": "source/cli" }
+    { "path": "packages/plugins/imessage/packages/core" },
+    { "path": "packages/plugins/imessage/packages/cli" },
+    { "path": "packages/plugins/web" },
+    { "path": "packages/core" },
+    { "path": "packages/server" },
+    { "path": "packages/sdk" },
+    { "path": "packages/cli" },
+    { "path": "packages/web" },
+    { "path": "packages/app" },
+    { "path": "packages/ui" },
+    { "path": "packages/relay/auth" },
+    { "path": "packages/relay/server" },
+    { "path": "packages/relay/daemon" }
   ]
 }

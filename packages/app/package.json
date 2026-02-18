@@ -1,0 +1,29 @@
+{
+  "name": "@steve/app",
+  "private": true,
+  "version": "0.0.0",
+  "description": "",
+  "type": "module",
+  "scripts": {
+    "start": "vite",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "serve": "vite preview"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.13",
+    "playwright": "^1.58.2",
+    "postcss": "^8.4.49",
+    "solid-devtools": "^0.34.3",
+    "tailwindcss": "^4.1.13",
+    "vite": "^7.1.4",
+    "vite-plugin-solid": "^2.11.8"
+  },
+  "dependencies": {
+    "@steve/ui": "workspace:*",
+    "@solidjs/router": "^0.15.1",
+    "solid-js": "^1.9.5"
+  }
+}

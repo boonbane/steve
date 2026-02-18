@@ -1,0 +1,15 @@
+{
+  "name": "steve-plugin-imessage-chart",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "bun server.ts"
+  },
+  "dependencies": {
+    "steve-plugin-imessage-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:"
+  }
+}

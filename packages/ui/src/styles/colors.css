@@ -1,0 +1,67 @@
+:root {
+  --neutral-0: oklch(1 0 0);
+  --neutral-1: oklch(0.97 0 0);
+  --neutral-2: oklch(0.922 0 0);
+  --neutral-3: oklch(0.92 0 286);
+  --neutral-6: oklch(0.556 0 0);
+  --neutral-7: oklch(0.205 0 0);
+  --neutral-8: oklch(0.708 0 0);
+  --neutral-9: oklch(0.145 0 0);
+
+  --blue-5: #2f7dff;
+  --blue-6: #1e67dc;
+
+  --green-5: #1e8f5f;
+  --green-1: #dff8ec;
+
+  --amber-5: #b86f00;
+  --amber-1: #fff1de;
+
+  --red-5: #c13d3d;
+  --red-1: #fdeaea;
+
+  --line-1: oklch(0.922 0 0);
+  --line-2: oklch(0.922 0 0);
+
+  --violet-7: oklch(0.97 0.01 255);
+  --violet-6: oklch(0.55 0.22 263);
+  --violet-4: oklch(0.92 0 286);
+  --violet-3: oklch(0.97 0 286);
+
+  --white: oklch(0.985 0 0);
+  --black: oklch(0.145 0 0);
+}
+
+:root[data-theme="dark"] {
+  --neutral-0: oklch(0.145 0 0);
+  --neutral-1: oklch(0.205 0 0);
+  --neutral-2: oklch(0.269 0 0);
+  --neutral-3: oklch(0.371 0 0);
+  --neutral-6: oklch(0.205 0 0);
+  --neutral-7: oklch(0.556 0 0);
+  --neutral-8: oklch(0.708 0 0);
+  --neutral-9: oklch(0.985 0 0);
+
+  --blue-5: #2558d0;
+  --blue-6: #113489;
+
+  --green-1: oklch(0.28 0.03 184.704);
+  --green-5: oklch(0.78 0.12 184.704);
+
+  --amber-1: oklch(0.31 0.05 70.08);
+  --amber-5: oklch(0.83 0.14 70.08);
+
+  --red-1: oklch(0.32 0.07 22.216);
+  --red-5: oklch(0.78 0.16 22.216);
+
+  --line-1: oklch(1 0 0 / 10%);
+  --line-2: oklch(1 0 0 / 15%);
+
+  --violet-7: oklch(0.28 0.09 268);
+  --violet-6: oklch(0.38 0.14 266);
+  --violet-4: oklch(0.37 0.01 286);
+  --violet-3: oklch(0.21 0.01 286);
+
+  --white: oklch(0.985 0 0);
+  --black: oklch(0.145 0 0);
+}

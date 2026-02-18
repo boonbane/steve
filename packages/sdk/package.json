@@ -1,0 +1,24 @@
+{
+  "name": "@steve/sdk",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "clean": "bun ../../tools/clean.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "bun run tools/build.ts"
+  },
+  "dependencies": {
+    "@hey-api/client-fetch": "^0.10.0"
+  },
+  "devDependencies": {
+    "@steve/core": "workspace:*",
+    "@steve/server": "workspace:*",
+    "@hey-api/openapi-ts": "^0.90.10",
+    "@types/bun": "catalog:"
+  }
+}

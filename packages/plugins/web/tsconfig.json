@@ -1,0 +1,12 @@
+{
+  "extends": "@tsconfig/bun/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "lib": ["ESNext", "DOM"],
+    "paths": {
+      "@steve/sdk": ["../../sdk/src/index.ts"],
+      "@steve/sdk/*": ["../../sdk/src/*"]
+    }
+  },
+  "include": ["src"]
+}
