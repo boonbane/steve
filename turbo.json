@@ -20,6 +20,9 @@
     },
     "@steve/web#build": {
       "outputs": ["dist/**"]
+    },
+    "@steve/desktop#build": {
+      "outputs": ["dist/**"]
     }
   }
 }

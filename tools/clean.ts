@@ -6,17 +6,18 @@ import { consola } from "consola";
 
 async function main() {
   const cwd = process.cwd();
-  const isRepoRoot =
-    fs.existsSync(path.join(cwd, "turbo.json")) &&
-    fs.existsSync(path.join(cwd, "package.json"));
+  const extra = process.argv.slice(2);
   const targets = [
     ".turbo",
     "dist",
+    "dist-ssr",
     "tsconfig.tsbuildinfo",
-    ...(isRepoRoot ? ["node_modules"] : [])
+    "tsconfig.node.tsbuildinfo",
+    ...extra,
   ];
+  const names = [...new Set(targets)];
   await Promise.all(
-    targets.map((name) =>
+    names.map((name) =>
       fs.promises.rm(path.join(cwd, name), { recursive: true, force: true }),
     ),
   );

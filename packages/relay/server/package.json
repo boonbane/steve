@@ -11,8 +11,6 @@
   },
   "dependencies": {
     "@clerk/backend": "^2.31.0",
-    "@openauthjs/openauth": "^0.4.3",
-    "@steve/relay-auth": "workspace:*",
     "hono": "catalog:",
     "valibot": "^1.0.0"
   },

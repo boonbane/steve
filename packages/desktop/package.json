@@ -1,0 +1,29 @@
+{
+  "name": "@steve/desktop",
+  "version": "0.1.0",
+  "description": "",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "vite",
+    "dev": "vite",
+    "clean": "bun ../../tools/clean.ts src-tauri/target src-tauri/gen/schemas",
+    "build": "bun run typecheck && vite build",
+    "serve": "vite preview",
+    "tauri": "tauri"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@steve/app": "workspace:*",
+    "@steve/ui": "workspace:*",
+    "solid-js": "^1.9.11",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-opener": "^2.5.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-solid": "^2.11.10",
+    "@tauri-apps/cli": "^2.10.0"
+  }
+}

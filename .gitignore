@@ -58,3 +58,7 @@ infra/terraform.tfstate*
 **/wrangler.jsonc
 .vscode
 .turbo
+
+# Tauri desktop build outputs
+**/src-tauri/target/
+**/src-tauri/gen/schemas/

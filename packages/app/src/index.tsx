@@ -1,13 +1,10 @@
 /* @refresh reload */
 import "solid-devtools";
-import "./index.css";
 
 import { render } from "solid-js/web";
 
-import App from "./app";
-import { Router } from "@solidjs/router";
-import { routes } from "./routes";
-import { Font } from "@steve/ui/font";
+import { webPlatform } from "./platform";
+import { AppRoot } from "./root";
 
 const root = document.getElementById("root");
 
@@ -17,12 +14,4 @@ if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
   );
 }
 
-render(
-  () => (
-    <>
-      <Font />
-      <Router root={(props) => <App>{props.children}</App>}>{routes}</Router>
-    </>
-  ),
-  root!,
-);
+render(() => <AppRoot platform={webPlatform} />, root!);

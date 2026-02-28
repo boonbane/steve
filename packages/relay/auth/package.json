@@ -8,7 +8,6 @@
     "./subjects": "./src/subjects.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@openauthjs/openauth": "^0.4.3",

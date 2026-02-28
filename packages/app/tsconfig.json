@@ -7,11 +7,15 @@
 
     // Modules
     "allowSyntheticDefaultImports": true,
+    "composite": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
     "esModuleInterop": true,
     "isolatedModules": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "noEmit": true,
+    "outDir": "node_modules/.ts-dist",
+    "tsBuildInfoFile": "node_modules/.ts-dist/tsconfig.tsbuildinfo",
 
     // Type Checking & Safety
     "strict": true,

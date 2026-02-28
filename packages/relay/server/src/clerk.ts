@@ -111,9 +111,12 @@ app.all("*", async (c) => {
   }
 
   const auth = requestState.toAuth();
+  const claims =
+    auth.tokenType === "m2m_token" && "claims" in auth ? auth.claims : null;
+
   const claimsUserId =
-    auth.claims && typeof auth.claims === "object" && "userId" in auth.claims
-      ? (auth.claims as Record<string, unknown>).userId
+    claims && typeof claims === "object" && "userId" in claims
+      ? (claims as Record<string, unknown>).userId
       : null;
 
   const subject =

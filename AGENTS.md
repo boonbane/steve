@@ -18,8 +18,7 @@ Bun monorepo with an iOS app.
 
 # Commands
 
-- `bun run typecheck`
-- `bun run server` (runs indefinitely)
+- `turbo typecheck`
 
 # Rules
 

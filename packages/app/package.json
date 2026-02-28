@@ -4,9 +4,16 @@
   "version": "0.0.0",
   "description": "",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./root": "./src/root.tsx",
+    "./platform": "./src/platform.tsx",
+    "./vite": "./vite.ts"
+  },
   "scripts": {
     "start": "vite",
     "dev": "vite",
+    "clean": "bun ../../tools/clean.ts .cache .wrangler .output .vercel .netlify .vinxi",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "serve": "vite preview",
