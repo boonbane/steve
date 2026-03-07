@@ -1,5 +1,6 @@
 import fs from "fs";
 import { Context } from "./context.ts";
+import { Environment } from "./environment.ts";
 import { Skill } from "./skill.ts";
 import { Task } from "./task.ts";
 import system from "./prompts/system.md" with { type: "text" };
@@ -30,7 +31,7 @@ function formatSkills(skills: Skill.List): string {
 }
 
 function formatTasks(tasks: Task.List): string {
-  const values = Object.values(tasks);
+  const values = Object.values(tasks).filter((task) => task.metadata.visible);
   if (values.length === 0) return "- none";
   return values
     .map((t) => `- ${t.metadata.name}: ${t.metadata.description}`)
@@ -83,20 +84,19 @@ export namespace Prompt {
       });
     }
 
-    const skills = task.metadata.skills.map((name) => Skill.get(name));
+    const environment = Environment.get(task.metadata.environment);
+    const names = environment?.skills ?? [];
+    const skills = names.map((name) => Skill.get(name));
     const list = skills.filter((skill) => skill !== undefined);
-    const missing = task.metadata.skills.filter(
-      (name) => !list.some((skill) => skill.metadata.name === name),
-    );
 
     const template = getTemplate("task");
     return render(template, {
       "steve.task.name": task.metadata.name,
       "steve.task.description": task.metadata.description,
-      "steve.task.scopes": task.metadata.scopes.join(", "),
+      "steve.task.environment": task.metadata.environment,
+      "steve.task.scopes": environment?.scopes.join(", ") ?? "- none",
       "steve.task.content": task.content,
       "steve.task.skills": formatTaskSkills(list),
-      "steve.task.skills.missing": missing.join(", "),
     });
   }
 }

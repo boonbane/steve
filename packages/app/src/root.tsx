@@ -2,6 +2,7 @@ import "./index.css";
 
 import { Router } from "@solidjs/router";
 import { Font } from "@steve/ui/font";
+import { createEffect } from "solid-js";
 
 import App from "./app";
 import { PlatformProvider, type Platform } from "./platform";
@@ -12,6 +13,10 @@ type RootProps = {
 };
 
 export const AppRoot = (props: RootProps) => {
+  createEffect(() => {
+    document.documentElement.dataset.theme ||= "dark";
+  });
+
   return (
     <PlatformProvider value={props.platform}>
       <Font />

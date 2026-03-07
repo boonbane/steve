@@ -40,7 +40,7 @@ export namespace Agent {
           sessionID: session.data.id,
           model: {
             providerID: "opencode",
-            modelID: "kimi-k2.5-free",
+            modelID: "big-pickle",
           },
           tools: {
             "*": true,

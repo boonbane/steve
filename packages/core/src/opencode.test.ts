@@ -3,8 +3,8 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { App } from "./db.ts";
 import { Context } from "./context.ts";
+import { Db } from "./db.ts";
 import { Opencode } from "./opencode.ts";
 
 let root = "";
@@ -47,7 +47,7 @@ describe("Opencode", () => {
       },
     });
 
-    await App.set("opencode.port", String(server.port));
+    await Db.App.set("opencode.port", String(server.port));
 
     let started = 0;
     Opencode.override({
@@ -65,7 +65,7 @@ describe("Opencode", () => {
   it("starts a new server and persists the selected port", async () => {
     const root = await dir("start");
     await Context.setDir(root);
-    await App.set("opencode.port", "43100");
+    await Db.App.set("opencode.port", "43100");
 
     const called: number[] = [];
     Opencode.override({
@@ -89,13 +89,13 @@ describe("Opencode", () => {
     const runtime = await Opencode.load();
     expect(runtime.url).toBe("http://127.0.0.1:43100");
     expect(called).toEqual([43100]);
-    expect(await App.get("opencode.port")).toBe("43100");
+    expect(await Db.App.get("opencode.port")).toBe("43100");
   });
 
   it("falls back to the next port when saved port fails", async () => {
     const root = await dir("fallback");
     await Context.setDir(root);
-    await App.set("opencode.port", "43100");
+    await Db.App.set("opencode.port", "43100");
 
     const called: number[] = [];
     Opencode.override({
@@ -122,7 +122,7 @@ describe("Opencode", () => {
     const runtime = await Opencode.load();
     expect(runtime.url).toBe("http://127.0.0.1:43101");
     expect(called.slice(0, 2)).toEqual([43100, 43101]);
-    expect(await App.get("opencode.port")).toBe("43101");
+    expect(await Db.App.get("opencode.port")).toBe("43101");
   });
 
   it("setDir closes an existing opencode runtime", async () => {

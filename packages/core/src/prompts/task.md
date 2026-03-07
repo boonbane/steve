@@ -1,17 +1,13 @@
-You are preparing detailed workflow context for Steve.
+You're being asked to complete the task "{{steve.task.name}}".
 
-Task name: {{steve.task.name}}
-Task description: {{steve.task.description}}
-Task scopes: {{steve.task.scopes}}
+## Description
+{{steve.task.description}}
 
-## Task
-
-{{steve.task.content}}
+## Filesystem Access
+{{steve.task.scopes}}
 
 ## Skills
-
 {{steve.task.skills}}
 
-## Missing skills
-
-{{steve.task.skills.missing}}
+## Task
+{{steve.task.content}}

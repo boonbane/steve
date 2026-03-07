@@ -4,10 +4,12 @@ import type { Opencode as OpencodeModule } from "./opencode.ts";
 import { Database } from "bun:sqlite";
 import type { Context as WhisperContext } from "@spader/node-whisper-cpp";
 import { Config } from "./config.ts";
-import { DB } from "./db.ts";
+import { Db } from "./db.ts";
+import { Environment } from "./environment.ts";
 import { Opencode } from "./opencode.ts";
 import { Skill } from "./skill.ts";
 import { Task } from "./task.ts";
+import { Trigger } from "./trigger.ts";
 import { Wav } from "./wav.ts";
 
 export namespace Context {
@@ -30,8 +32,10 @@ export namespace Context {
     config?: Config.Resolved;
     dirs?: Dirs;
     logger?: pino.Logger;
+    environments?: Environment.List;
     skills?: Skill.List;
     tasks?: Task.List;
+    triggers?: Trigger.List;
     db?: Promise<Database>;
     opencode?: Promise<Opencode>;
     whisper?: WhisperContext;
@@ -53,7 +57,7 @@ export namespace Context {
       value.whisper.free();
     }
     if (value.db) {
-      tasks.push(DB.close(value.db).catch(() => undefined));
+      tasks.push(Db.close(value.db).catch(() => undefined));
     }
 
     await Promise.all(tasks);
@@ -111,6 +115,12 @@ export namespace Context {
     return store.logger;
   }
 
+  export function environments(): Environment.List {
+    if (store.environments) return store.environments;
+    store.environments = Environment.load();
+    return store.environments;
+  }
+
   export function skills(): Skill.List {
     if (store.skills) return store.skills;
     store.skills = Skill.load();
@@ -123,17 +133,25 @@ export namespace Context {
     return store.tasks;
   }
 
+  export function triggers(): Trigger.List {
+    if (store.triggers) return store.triggers;
+    store.triggers = Trigger.load();
+    return store.triggers;
+  }
+
   export function preload() {
     config();
     dirs();
+    environments();
     skills();
     tasks();
+    triggers();
     opencode();
   }
 
   export async function db(): Promise<Database> {
     if (store.db) return store.db;
-    store.db = DB.open(dirs().db);
+    store.db = Db.open(dirs().db);
     return store.db;
   }
 
@@ -170,10 +188,12 @@ export namespace Context {
     const value = store;
     store = {
       ...store,
-      config: { dir, data: dir },
+      config: { dir, data: dir, environments: {}, triggers: [] },
       dirs: undefined,
+      environments: undefined,
       skills: undefined,
       tasks: undefined,
+      triggers: undefined,
       db: undefined,
       opencode: undefined,
       whisper: undefined,

@@ -8,8 +8,8 @@ export namespace Task {
   const Schema = z.object({
     name: z.string(),
     description: z.string(),
-    skills: z.array(z.string()),
-    scopes: z.array(z.string()),
+    environment: z.string(),
+    visible: z.boolean().default(true),
   });
 
   export type Metadata = z.infer<typeof Schema>;

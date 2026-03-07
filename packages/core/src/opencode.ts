@@ -4,7 +4,7 @@ import {
   type OpencodeClient,
   type Config,
 } from "@opencode-ai/sdk/v2";
-import { App } from "./db.ts";
+import { Db } from "./db.ts";
 import { Context } from "./context.ts";
 import { logger } from "./context.ts";
 
@@ -73,7 +73,7 @@ export namespace Opencode {
   export async function load(): Promise<Resolved> {
     const dir = Context.dirs();
     const plugin = new URL("./plugin/steve.ts", import.meta.url).href;
-    const saved = await App.get(PORT_KEY).then(parsePort);
+    const saved = await Db.App.get(PORT_KEY).then(parsePort);
     const errors: string[] = [];
 
     if (saved !== undefined) {
@@ -108,7 +108,7 @@ export namespace Opencode {
 
       if (runtime) {
         const url = new URL(runtime.server.url);
-        App.set(PORT_KEY, url.port);
+        Db.App.set(PORT_KEY, url.port);
 
         return {
           client: runtime.client,
@@ -138,12 +138,10 @@ export namespace Opencode {
       .then((runtime) => runtime.client.event.subscribe())
       .then(async (events) => {
         for await (const event of events.stream) {
+          if (String(event.type).includes("heartbeat")) continue;
+
           logger.info(
-            {
-              kind: event.type,
-              timestamp: Date.now(),
-            },
-            "opencode event",
+            `opencode.${event.type}`
           );
         }
       })

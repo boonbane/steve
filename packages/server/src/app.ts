@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { requestId } from "hono/request-id";
 import {
   describeRoute,
@@ -7,7 +8,7 @@ import {
   validator,
 } from "hono-openapi";
 import { z } from "zod";
-import { Agent, Message, Timer, logger } from "@steve/core";
+import { Agent, Db, Timer, logger } from "@steve/core";
 import { HealthRoutes } from "./routes/health.ts";
 import { EchoRoutes } from "./routes/echo.ts";
 import { VoiceRoutes } from "./routes/voice.ts";
@@ -26,6 +27,7 @@ const ErrorOutput = z.object({
 
 export namespace App {
   const app = new Hono()
+    .use(cors())
     .use(requestId())
     .use(async (c, next) => {
       const start = Bun.nanoseconds();
@@ -65,7 +67,7 @@ export namespace App {
             description: "Stored message",
             content: {
               "application/json": {
-                schema: resolver(Message.Info),
+                schema: resolver(Db.Message.Info),
               },
             },
           },
@@ -82,12 +84,12 @@ export namespace App {
       validator("json", PromptInput),
       async (c) => {
         const input = c.req.valid("json");
-        const message = await Message.add(input.text);
+        const message = await Db.Message.add(input.text);
         const client = await Agent.client();
         const output = await Timer.run("agent response", () =>
           client.prompt({ text: input.text }),
         );
-        const response = await Message.respond(message.id, output.text);
+        const response = await Db.Message.respond(message.id, output.text);
         return c.json({
           ...message,
           response,
@@ -104,7 +106,7 @@ export namespace App {
             description: "List of messages",
             content: {
               "application/json": {
-                schema: resolver(Message.Info.array()),
+                schema: resolver(Db.Message.Info.array()),
               },
             },
           },
@@ -121,7 +123,7 @@ export namespace App {
       validator("query", ListInput),
       async (c) => {
         const query = c.req.valid("query");
-        const messages = await Message.list(query.limit);
+        const messages = await Db.Message.list(query.limit);
         return c.json(messages);
       },
     );

@@ -6,7 +6,13 @@ import { ios } from "./ios/index.ts";
 
 const serve: CommandDef = {
   description: "Start the Steve server",
-  handler: async () => {
+  options: {
+    trigger: {
+      type: "boolean",
+      description: "Run triggers immediately on startup",
+    },
+  },
+  handler: async (argv) => {
     const client = await Client.connect();
     const result = await client.health();
     if (result && !result.error && result.data) {
@@ -18,7 +24,9 @@ const serve: CommandDef = {
     }
 
     const { Server } = await import("@steve/server");
-    Server.start();
+    Server.start({
+      trigger: Boolean(argv.trigger),
+    });
   },
 };
 

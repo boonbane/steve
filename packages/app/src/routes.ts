@@ -14,6 +14,14 @@ export const routes: RouteDefinition[] = [
     component: lazy(() => import('./pages/account')),
   },
   {
+    path: '/steve',
+    component: lazy(() => import('./pages/steve')),
+  },
+  {
+    path: '/steve/settings',
+    component: lazy(() => import('./pages/steve-settings')),
+  },
+  {
     path: '/devices',
     component: lazy(() => import('./pages/devices')),
   },

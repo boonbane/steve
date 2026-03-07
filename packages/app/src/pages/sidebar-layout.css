@@ -30,6 +30,16 @@
   gap: var(--space-2);
 }
 
+[data-slot="section-nav-group"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+[data-slot="section-nav-group"][data-position="footer"] {
+  margin-top: auto;
+}
+
 [data-component="section-nav"] [data-nav-button] {
   display: flex;
   align-items: center;
@@ -95,6 +105,132 @@
   gap: var(--space-3);
 }
 
+[data-component="settings-group"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+[data-component="settings-group"] h2 {
+  margin: 0;
+  padding-bottom: var(--space-2);
+  font-size: var(--font-size-base);
+  color: var(--text-strong);
+}
+
+[data-component="settings-panel"] {
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  padding: 0 var(--space-4);
+}
+
+[data-slot="setting-row"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-base);
+}
+
+[data-slot="setting-row"]:last-child {
+  border-bottom: none;
+}
+
+[data-slot="setting-copy"] {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+[data-slot="setting-copy"] h3,
+[data-slot="setting-copy"] p {
+  margin: 0;
+}
+
+[data-slot="setting-copy"] h3 {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+[data-slot="setting-copy"] p {
+  font-size: var(--font-size-small);
+  color: var(--text-muted);
+}
+
+[data-slot="setting-value"] {
+  flex-shrink: 0;
+}
+
+[data-component="setting-control-group"] {
+  min-width: min(34rem, 80vw);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+[data-slot="setting-value"] [data-setting-control="text"] {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-base);
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+}
+
+[data-slot="setting-value"] [data-setting-control="text"]::placeholder {
+  color: var(--text-muted);
+}
+
+[data-slot="setting-value"] [data-setting-control="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--button-primary-base);
+}
+
+[data-slot="setting-value"] [data-setting-control="select"] {
+  min-width: 9rem;
+  border: 1px solid var(--border-base);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-base);
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+}
+
+[data-component="setting-action-group"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+[data-component="setting-action-group"] [data-component="button"] {
+  min-width: 5.5rem;
+}
+
+[data-component="setting-action-group"] [data-component="button"][data-status="ok"] {
+  border-color: transparent;
+  background: var(--status-success-bg);
+  color: var(--status-success-text);
+}
+
+[data-component="setting-action-group"] [data-component="button"][data-status="error"] {
+  border-color: transparent;
+  background: var(--status-error-bg);
+  color: var(--status-error-text);
+}
+
+[data-component="setting-action-group"] [data-component="button"][data-status="loading"] {
+  opacity: 0.75;
+}
+
 [data-component="settings-table-wrap"] {
   width: 100%;
   overflow-x: auto;
@@ -143,7 +279,7 @@
 [data-slot="card"] {
   border: 1px solid var(--border-base);
   border-radius: var(--radius-md);
-  background: var(--background-raised);
+  background: var(--surface-muted);
   padding: var(--space-4);
   display: flex;
   flex-direction: column;
@@ -161,6 +297,19 @@
   color: var(--text-base);
 }
 
+[data-page="settings-section"][data-modal="steve-settings"] {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-4);
+  padding-bottom: var(--space-6);
+}
+
+@media (min-width: 40rem) {
+  [data-page="settings-section"][data-modal="steve-settings"] {
+    padding: var(--space-6);
+  }
+}
+
 @media (max-width: 56rem) {
   [data-layout="sidebar-split"] {
     grid-template-columns: 1fr;
@@ -176,6 +325,15 @@
     max-width: none;
     flex-direction: row;
     flex-wrap: wrap;
+  }
+
+  [data-slot="section-nav-group"] {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  [data-slot="section-nav-group"][data-position="footer"] {
+    margin-top: 0;
   }
 
   [data-component="section-nav"] [data-nav-button] {

@@ -2,9 +2,15 @@ import { Database } from "bun:sqlite";
 import fs from "fs";
 import path from "path";
 import { SQL } from "./sql.ts";
-export { App, Message } from "./db/index.ts";
+import { App as AppNS } from "./db/app.ts";
+import { Message as MessageNS } from "./db/message.ts";
+import { Trigger as TriggerNS } from "./db/trigger.ts";
 
-export namespace DB {
+export namespace Db {
+  export import App = AppNS;
+  export import Message = MessageNS;
+  export import Trigger = TriggerNS;
+
   export async function open(file: string): Promise<Database> {
     await fs.promises.mkdir(path.dirname(file), { recursive: true });
     const db = new Database(file, { create: true });

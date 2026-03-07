@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { Context } from "./context.ts";
 import { Task } from "./task.ts";
@@ -15,9 +14,9 @@ type Item = {
 };
 
 async function tmpRoot(label: string): Promise<string> {
-  root = await fs.promises.mkdtemp(
-    path.join(os.tmpdir(), `steve-task-test-${label}-`),
-  );
+  const base = path.join(process.cwd(), ".tmp", "core-task-test");
+  await fs.promises.mkdir(base, { recursive: true });
+  root = await fs.promises.mkdtemp(path.join(base, `${label}-`));
   return root;
 }
 
@@ -41,6 +40,25 @@ async function loadTasks(items: Item[]): Promise<Task.List> {
   const root = await tmpRoot("load");
   await writeTasks(root, items);
   await Context.setDir(root);
+  Context.override({
+    config: {
+      ...Context.config(),
+      environments: {
+        default: {
+          skills: ["git", "search"],
+          scopes: ["repo"],
+        },
+        alpha: {
+          skills: ["s1"],
+          scopes: ["scope-a"],
+        },
+        beta: {
+          skills: ["s2"],
+          scopes: ["scope-b"],
+        },
+      },
+    },
+  });
   return Context.tasks();
 }
 
@@ -66,17 +84,33 @@ describe("Task", () => {
         json: {
           name: "mytask",
           description: "Test task",
-          skills: ["git", "search"],
-          scopes: ["repo"],
+          environment: "default",
         },
       },
     ]);
 
     expect(Object.keys(tasks)).toHaveLength(1);
     expect(tasks.mytask?.metadata.name).toBe("mytask");
-    expect(tasks.mytask?.metadata.skills).toEqual(["git", "search"]);
-    expect(tasks.mytask?.metadata.scopes).toEqual(["repo"]);
+    expect(tasks.mytask?.metadata.environment).toBe("default");
+    expect(tasks.mytask?.metadata.visible).toBe(true);
     expect(tasks.mytask?.content).toBe("Do the thing");
+  });
+
+  it("loads explicit visibility", async () => {
+    const tasks = await loadTasks([
+      {
+        name: "hidden",
+        md: "Secret",
+        json: {
+          name: "hidden",
+          description: "Hidden task",
+          environment: "default",
+          visible: false,
+        },
+      },
+    ]);
+
+    expect(tasks.hidden?.metadata.visible).toBe(false);
   });
 
   it("skips invalid task states", async () => {
@@ -86,8 +120,7 @@ describe("Task", () => {
         json: {
           name: "missing-md",
           description: "bad",
-          skills: ["s"],
-          scopes: ["x"],
+          environment: "x",
         },
       },
       {
@@ -113,8 +146,7 @@ describe("Task", () => {
         json: {
           name: "valid",
           description: "ok",
-          skills: ["read"],
-          scopes: ["repo"],
+          environment: "default",
         },
       },
     ]);
@@ -130,8 +162,7 @@ describe("Task", () => {
         json: {
           name: "alpha",
           description: "a",
-          skills: ["s1"],
-          scopes: ["scope-a"],
+          environment: "alpha",
         },
       },
     ]);
@@ -150,8 +181,7 @@ describe("Task", () => {
         json: {
           name: "alpha",
           description: "a",
-          skills: ["s1"],
-          scopes: ["scope-a"],
+          environment: "alpha",
         },
       },
     ]);
@@ -172,8 +202,7 @@ describe("Task", () => {
         json: {
           name: "beta",
           description: "b",
-          skills: ["s2"],
-          scopes: ["scope-b"],
+          environment: "beta",
         },
       },
     ]);

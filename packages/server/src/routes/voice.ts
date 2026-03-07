@@ -1,14 +1,7 @@
 import { Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import { z } from "zod";
-import {
-  Agent,
-  Context,
-  Message,
-  Timer,
-  Transcriber,
-  logger,
-} from "@steve/core";
+import { Agent, Context, Db, Timer, Transcriber, logger } from "@steve/core";
 
 namespace Voice {
   export namespace Client {
@@ -92,13 +85,13 @@ export function VoiceRoutes() {
 
             send(ws, { type: "done", text });
 
-            const message = await Message.add(text);
+            const message = await Db.Message.add(text);
             const client = await Agent.client();
             const output = await Timer.run("voice: agent response", () =>
               client.prompt({ text }),
             );
 
-            await Message.respond(message.id, output.text);
+            await Db.Message.respond(message.id, output.text);
             send(ws, { type: "response", text: output.text });
           } else {
             transcriber.push(event.data as ArrayBuffer);
