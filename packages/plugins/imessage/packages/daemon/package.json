@@ -1,0 +1,25 @@
+{
+  "name": "steve-plugin-imessage-daemon",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "imessaged": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "events": "bun tools/events.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "catalog:",
+    "pino": "catalog:",
+    "pino-pretty": "catalog:",
+    "steve-plugin-imessage-core": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:"
+  }
+}

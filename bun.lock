@@ -88,16 +88,6 @@
     "packages/plugins/imessage": {
       "name": "steve-plugin-imessage",
     },
-    "packages/plugins/imessage/packages/chart": {
-      "name": "steve-plugin-imessage-chart",
-      "version": "0.0.1",
-      "dependencies": {
-        "steve-plugin-imessage-core": "workspace:*",
-      },
-      "devDependencies": {
-        "@types/bun": "catalog:",
-      },
-    },
     "packages/plugins/imessage/packages/cli": {
       "name": "steve-plugin-imessage-cli",
       "version": "0.0.1",
@@ -125,6 +115,23 @@
       "devDependencies": {
         "@types/bun": "catalog:",
         "@types/yargs": "catalog:",
+      },
+    },
+    "packages/plugins/imessage/packages/daemon": {
+      "name": "steve-plugin-imessage-daemon",
+      "version": "0.0.1",
+      "bin": {
+        "imessaged": "src/index.ts",
+      },
+      "dependencies": {
+        "hono": "catalog:",
+        "pino": "catalog:",
+        "pino-pretty": "catalog:",
+        "steve-plugin-imessage-core": "workspace:*",
+        "zod": "catalog:",
+      },
+      "devDependencies": {
+        "@types/bun": "catalog:",
       },
     },
     "packages/plugins/web": {
@@ -1588,11 +1595,11 @@
 
     "steve-plugin-imessage": ["steve-plugin-imessage@workspace:packages/plugins/imessage"],
 
-    "steve-plugin-imessage-chart": ["steve-plugin-imessage-chart@workspace:packages/plugins/imessage/packages/chart"],
-
     "steve-plugin-imessage-cli": ["steve-plugin-imessage-cli@workspace:packages/plugins/imessage/packages/cli"],
 
     "steve-plugin-imessage-core": ["steve-plugin-imessage-core@workspace:packages/plugins/imessage/packages/core"],
+
+    "steve-plugin-imessage-daemon": ["steve-plugin-imessage-daemon@workspace:packages/plugins/imessage/packages/daemon"],
 
     "steve-plugin-web-interface": ["steve-plugin-web-interface@workspace:packages/plugins/web"],
 

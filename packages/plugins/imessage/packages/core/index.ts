@@ -94,6 +94,8 @@ export interface IClient {
   list(limit?: number): Chat[];
   send(chatId: number, text: string): void;
   history(chatId: number, limit?: number, reverse?: boolean): Message[];
+  latestMessageAt(): Date;
+  since(cursor: Date, limit?: number): Message[];
   subscribe(fn: Subscriber): () => void;
   close(): void;
 }
@@ -181,6 +183,10 @@ function toDate(value: bigint | number | null): Date {
   }
 
   return new Date(Math.floor(value / 1_000_000) + APPLE_EPOCH_MS);
+}
+
+function toAppleNs(value: Date): bigint {
+  return BigInt(value.getTime() - APPLE_EPOCH_MS) * 1_000_000n;
 }
 
 function toBoolean(value: bigint | number | boolean | null): boolean {
@@ -420,6 +426,52 @@ class SQLiteClient implements IClient {
         `,
       )
       .all(id, count) as MessageRow[];
+
+    return rows.map((row) => this.parseMessage(row));
+  }
+
+  latestMessageAt(): Date {
+    const row = this.db
+      .query("SELECT MAX(date) AS lastDate FROM message")
+      .get() as {
+      lastDate: bigint | number | null;
+    } | null;
+
+    return toDate(row?.lastDate ?? null);
+  }
+
+  since(cursor: Date, limit = DEFAULT_BATCH_LIMIT): Message[] {
+    const point = z.date().parse(cursor);
+    const count = parseLimit(limit, DEFAULT_BATCH_LIMIT);
+    const reactionFilter = this.hasAssociatedMessageType
+      ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
+      : "";
+    const bodyColumn = this.hasAttributedBody ? "m.attributedBody" : "NULL";
+    const destinationColumn = this.hasDestinationCallerID
+      ? "m.destination_caller_id"
+      : "NULL";
+    const rows = this.db
+      .query(
+        `
+          SELECT
+            m.ROWID AS id,
+            cmj.chat_id AS chatId,
+            h.id AS sender,
+            IFNULL(m.text, '') AS text,
+            m.date AS createdAtNs,
+            m.is_from_me AS isFromMe,
+            m.service AS service,
+            ${destinationColumn} AS destinationCallerId,
+            ${bodyColumn} AS attributedBody
+          FROM message m
+          JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+          LEFT JOIN handle h ON m.handle_id = h.ROWID
+          WHERE m.date > ?1${reactionFilter}
+          ORDER BY m.date ASC, m.ROWID ASC
+          LIMIT ?2
+        `,
+      )
+      .all(toAppleNs(point), count) as MessageRow[];
 
     return rows.map((row) => this.parseMessage(row));
   }

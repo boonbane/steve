@@ -192,6 +192,68 @@ describe("Client", () => {
     expect(messages[1]?.id).toBe(1);
   });
 
+  it("since() and latestMessageAt() support timestamp cursors", async () => {
+    const { dbPath } = await fixture();
+    const firstAt = 1_700_000_000_000;
+    const secondAt = firstAt + 1000;
+    const db = new Database(dbPath);
+
+    db.run("INSERT INTO handle(ROWID, id) VALUES (?1, ?2)", [
+      1,
+      "+15550001111",
+    ]);
+
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, text, destination_caller_id, date, is_from_me, service, associated_message_type, attributedBody) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+      [
+        1,
+        1,
+        "first",
+        "",
+        toAppleNs(firstAt),
+        0,
+        "iMessage",
+        null,
+        Buffer.alloc(0),
+      ],
+    );
+
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, text, destination_caller_id, date, is_from_me, service, associated_message_type, attributedBody) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+      [
+        2,
+        1,
+        "second",
+        "",
+        toAppleNs(secondAt),
+        0,
+        "iMessage",
+        null,
+        Buffer.alloc(0),
+      ],
+    );
+
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (?1, ?2)",
+      [1, 1],
+    );
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (?1, ?2)",
+      [1, 2],
+    );
+    db.close();
+
+    const client = Client({ dbPath });
+    const latest = client.latestMessageAt();
+    const messages = client.since(new Date(firstAt));
+    client.close();
+
+    expect(latest.getTime()).toBe(secondAt);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.id).toBe(2);
+    expect(messages[0]?.text).toBe("second");
+  });
+
   it("send() executes AppleScript via configured runner", async () => {
     const { dbPath } = await fixture();
     let source = "";
