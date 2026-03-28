@@ -162,11 +162,6 @@ export namespace IMsgDaemon {
     }
 
     private poll(): void {
-      this.emit({
-        event: "hello",
-        data: "hello world",
-      });
-
       let shouldContinue = true;
 
       while (shouldContinue) {

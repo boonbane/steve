@@ -53,6 +53,9 @@ export namespace Contacts {
 
     const lib = IMsgNative.load();
     if (!lib) {
+      console.warn(
+        "warning: native library not available — contact names will not be resolved.",
+      );
       return new Map<string, string>();
     }
 
@@ -60,6 +63,15 @@ export namespace Contacts {
     const status =
       auth === 0 ? lib.symbols.imsg_contacts_request_access() : auth;
     if (status !== 2) {
+      const reason =
+        status === 1
+          ? "denied"
+          : status === 3
+            ? "restricted"
+            : `unknown (status=${status})`;
+      console.warn(
+        `warning: Contacts access ${reason} — names will not be resolved. Check System Settings → Privacy & Security → Contacts.`,
+      );
       return new Map<string, string>();
     }
 

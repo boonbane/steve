@@ -73,7 +73,8 @@ export namespace IMsgNative {
 
     try {
       loaded = dlopen(dylib, symbols);
-    } catch {
+    } catch (err) {
+      console.warn(`warning: failed to load native library at ${dylib}:`, err);
       loaded = null;
     }
 

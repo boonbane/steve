@@ -151,7 +151,7 @@ afterEach(async () => {
 });
 
 describe("IMsgDaemon", () => {
-  it("emits hello and message events on database update", async () => {
+  it("emits message events on database update", async () => {
     const { dbPath } = await fixture();
     const daemon = IMsgDaemon.start({
       port: 0,
@@ -201,7 +201,6 @@ describe("IMsgDaemon", () => {
 
       const output = await readUntil(reader, "event: message.received");
 
-      expect(output).toContain("data: hello world");
       expect(output).toContain('"text":"live"');
     } finally {
       if (reader) {
