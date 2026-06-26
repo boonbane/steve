@@ -30,7 +30,9 @@ async function fixture() {
         chat_identifier TEXT,
         guid TEXT,
         display_name TEXT,
-        service_name TEXT
+        service_name TEXT,
+        style INTEGER,
+        group_id TEXT
       )
     `,
   );
@@ -46,6 +48,15 @@ async function fixture() {
 
   db.run(
     `
+      CREATE TABLE chat_handle_join (
+        chat_id INTEGER,
+        handle_id INTEGER
+      )
+    `,
+  );
+
+  db.run(
+    `
       CREATE TABLE message (
         ROWID INTEGER PRIMARY KEY,
         handle_id INTEGER,
@@ -53,6 +64,8 @@ async function fixture() {
         destination_caller_id TEXT,
         date INTEGER,
         is_from_me INTEGER,
+        is_sent INTEGER DEFAULT 0,
+        error INTEGER DEFAULT 0,
         service TEXT,
         associated_message_type INTEGER,
         attributedBody BLOB
@@ -270,11 +283,61 @@ describe("Client", () => {
     client.send(1, "hello world");
     client.close();
 
+    // Routes through the chat thread by guid (chat-target path), not the buddy
+    // path: empty recipient, the chat guid in slot 3, useChat flag set.
     expect(source).toContain('tell application "Messages"');
-    expect(args[0]).toBe("+15551234567");
+    expect(args[0]).toBe("");
     expect(args[1]).toBe("hello world");
-    expect(args[3]).toBe("");
-    expect(args[4]).toBe("0");
+    expect(args[3]).toBe("iMessage;+;chat123");
+    expect(args[4]).toBe("1");
+  });
+
+  it("send() resolves the service from the latest delivered message and routes to the matching thread", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    // Same recipient, a separate carrier (SMS) chat row alongside the iMessage
+    // row from the fixture — mirrors how chat.db splits a person across services.
+    db.run(
+      "INSERT INTO chat(ROWID, chat_identifier, guid, display_name, service_name) VALUES (?1, ?2, ?3, ?4, ?5)",
+      [2, "+15551234567", "SMS;-;+15551234567", "Test Chat", "SMS"],
+    );
+
+    db.run("INSERT INTO handle(ROWID, id) VALUES (?1, ?2)", [
+      1,
+      "+15551234567",
+    ]);
+
+    // A genuine, delivered RCS message proves the working service.
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, date, is_from_me, is_sent, error, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [1, 1, toAppleNs(Date.now() - 2000), 0, 0, 0, "RCS"],
+    );
+
+    // A more recent iMessage send that bounced — it is the newest row but must
+    // be ignored because it failed.
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, date, is_from_me, is_sent, error, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [2, 1, toAppleNs(Date.now() - 1000), 1, 0, 22, "iMessage"],
+    );
+    db.close();
+
+    let args: readonly string[] = [];
+    const client = Client({
+      dbPath,
+      scriptRunner: (_script, scriptArgs) => {
+        args = scriptArgs;
+      },
+    });
+
+    // Caller references the iMessage chat row, but the resolver must pick the
+    // carrier service and route to the SMS thread guid.
+    client.send(1, "hello world");
+    client.close();
+
+    expect(args[2]).toBe("sms");
+    expect(args[3]).toBe("SMS;-;+15551234567");
+    expect(args[4]).toBe("1");
   });
 
   it("subscribe() emits new messages", async () => {
@@ -331,5 +394,195 @@ describe("Client", () => {
       unsubscribe?.();
       client.close();
     }
+  });
+
+  it("conversations() collapses a person's transports under one stable id", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    // A second, carrier chat row for the same handle as the fixture's iMessage
+    // row — exactly how chat.db splits one person across services.
+    db.run(
+      "INSERT INTO chat(ROWID, chat_identifier, guid, display_name, service_name, style, group_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [2, "+15551234567", "SMS;-;+15551234567", "", "SMS", null, null],
+    );
+    db.run("INSERT INTO handle(ROWID, id) VALUES (?1, ?2)", [
+      1,
+      "+15551234567",
+    ]);
+    db.run(
+      "INSERT INTO chat_handle_join(chat_id, handle_id) VALUES (1, 1), (2, 1)",
+    );
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      [1, 1, "imsg", toAppleNs(Date.now() - 2000), 0, "iMessage"],
+    );
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      [2, 1, "sms", toAppleNs(Date.now() - 1000), 0, "SMS"],
+    );
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 1), (2, 2)",
+    );
+    db.close();
+
+    const client = Client({ dbPath });
+    const direct = client
+      .conversations()
+      .find((c) => c.id === "d:+15551234567");
+
+    expect(direct).toBeTruthy();
+    expect([...(direct?.chatIds ?? [])].sort()).toEqual([1, 2]);
+    expect(direct?.isGroup).toBe(false);
+    // Both transport rows resolve to the same conversation.
+    expect(client.conversationByChat(1)?.id).toBe("d:+15551234567");
+    expect(client.conversationByChat(2)?.id).toBe("d:+15551234567");
+    expect(client.conversation("d:+15551234567")?.identifier).toBe(
+      "+15551234567",
+    );
+    client.close();
+  });
+
+  it("conversations() keys groups on group_id, stable across membership changes", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    // Two group rows that share Apple's group_id but have *different* member
+    // sets — the situation a member-set hash would wrongly split into two
+    // conversations. They must merge into one, keyed on the group_id.
+    db.run(
+      "INSERT INTO chat(ROWID, chat_identifier, guid, display_name, service_name, style, group_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [3, "chat900", "iMessage;+;chat900", "Squad", "iMessage", 43, "GROUP-ABC"],
+    );
+    db.run(
+      "INSERT INTO chat(ROWID, chat_identifier, guid, display_name, service_name, style, group_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [4, "chat901", "iMessage;+;chat901", "", "iMessage", 43, "GROUP-ABC"],
+    );
+    db.run(
+      "INSERT INTO handle(ROWID, id) VALUES (1, '+15550001111'), (2, '+15550002222')",
+    );
+    db.run(
+      "INSERT INTO chat_handle_join(chat_id, handle_id) VALUES (3, 1), (4, 1), (4, 2)",
+    );
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      [5, 1, "a", toAppleNs(Date.now() - 2000), 0, "iMessage"],
+    );
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      [6, 2, "b", toAppleNs(Date.now() - 1000), 0, "iMessage"],
+    );
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (3, 5), (4, 6)",
+    );
+    db.close();
+
+    const client = Client({ dbPath });
+    const group = client.conversations().find((c) => c.id === "g:GROUP-ABC");
+
+    expect(group).toBeTruthy();
+    expect(group?.isGroup).toBe(true);
+    expect([...(group?.chatIds ?? [])].sort()).toEqual([3, 4]);
+    expect(group?.name).toBe("Squad");
+    client.close();
+  });
+
+  it("sent() locates the outgoing message a send produced", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    db.run(
+      "INSERT INTO message(ROWID, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5)",
+      [50, "earlier", toAppleNs(Date.now() - 3000), 1, "iMessage"],
+    );
+    db.run(
+      "INSERT INTO message(ROWID, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5)",
+      [51, "hello there", toAppleNs(Date.now() - 1000), 1, "iMessage"],
+    );
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 50), (1, 51)",
+    );
+    db.close();
+
+    const client = Client({ dbPath });
+    // The newest outgoing row past the cursor whose text matches.
+    expect(client.sent([1], 50, "hello there")?.id).toBe(51);
+    // Nothing newer than the row itself.
+    expect(client.sent([1], 51, "hello there")).toBeNull();
+    // Text must match — a different send isn't ours.
+    expect(client.sent([1], 50, "different")).toBeNull();
+    client.close();
+  });
+
+  it("after() replays messages newer than a ROWID, oldest first", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    db.run("INSERT INTO handle(ROWID, id) VALUES (1, '+15550001111')");
+    for (const id of [60, 61, 62]) {
+      db.run(
+        "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        [id, 1, `m${id}`, toAppleNs(Date.now() - (70 - id) * 1000), 0, "iMessage"],
+      );
+      db.run("INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, ?1)", [
+        id,
+      ]);
+    }
+    db.close();
+
+    const client = Client({ dbPath });
+    expect(client.after(60).map((m) => m.id)).toEqual([61, 62]);
+    expect(client.latestRowId()).toBe(62);
+    client.close();
+  });
+
+  it("historyAcross() paginates newest-first with a before cursor", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    db.run("INSERT INTO handle(ROWID, id) VALUES (1, '+15550001111')");
+    for (const id of [70, 71, 72]) {
+      db.run(
+        "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        [id, 1, `m${id}`, toAppleNs(Date.now() - (80 - id) * 1000), 0, "iMessage"],
+      );
+      db.run("INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, ?1)", [
+        id,
+      ]);
+    }
+    db.close();
+
+    const client = Client({ dbPath });
+    expect(client.historyAcross([1], 2).map((m) => m.id)).toEqual([72, 71]);
+    expect(client.historyAcross([1], 2, 71).map((m) => m.id)).toEqual([70]);
+    client.close();
+  });
+
+  it("historyAcross() orders by message date even when ROWID disagrees", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    db.run("INSERT INTO handle(ROWID, id) VALUES (1, '+15550001111')");
+    // ROWID 80 was inserted first but carries the *newer* date (a backfill /
+    // out-of-order sync). Display order must follow date, not ROWID.
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      [80, 1, "newer", toAppleNs(Date.now()), 0, "iMessage"],
+    );
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+      [81, 1, "older", toAppleNs(Date.now() - 60_000), 0, "iMessage"],
+    );
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 80), (1, 81)",
+    );
+    db.close();
+
+    const client = Client({ dbPath });
+    // Newest-first by date: 80 (newer) precedes 81 (older), despite 80 < 81.
+    expect(client.historyAcross([1], 10).map((m) => m.id)).toEqual([80, 81]);
+    // The (date, ROWID) cursor pages strictly older than 80 — i.e. 81.
+    expect(client.historyAcross([1], 10, 80).map((m) => m.id)).toEqual([81]);
+    client.close();
   });
 });

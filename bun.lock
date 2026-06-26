@@ -135,6 +135,25 @@
         "@types/bun": "catalog:",
       },
     },
+    "packages/plugins/imessage/packages/web": {
+      "name": "steve-plugin-imessage-web",
+      "version": "0.0.1",
+      "dependencies": {
+        "@steve/ui": "workspace:*",
+        "consola": "catalog:",
+        "solid-js": "^1.9.5",
+        "steve-plugin-imessage-core": "workspace:*",
+      },
+      "devDependencies": {
+        "@tailwindcss/postcss": "^4.1.13",
+        "@types/bun": "catalog:",
+        "playwright": "^1.58.2",
+        "postcss": "^8.4.49",
+        "tailwindcss": "^4.1.13",
+        "vite": "^7.1.4",
+        "vite-plugin-solid": "^2.11.8",
+      },
+    },
     "packages/plugins/web": {
       "name": "steve-plugin-web-interface",
       "version": "0.0.1",
@@ -1609,6 +1628,8 @@
     "steve-plugin-imessage-core": ["steve-plugin-imessage-core@workspace:packages/plugins/imessage/packages/core"],
 
     "steve-plugin-imessage-daemon": ["steve-plugin-imessage-daemon@workspace:packages/plugins/imessage/packages/daemon"],
+
+    "steve-plugin-imessage-web": ["steve-plugin-imessage-web@workspace:packages/plugins/imessage/packages/web"],
 
     "steve-plugin-web-interface": ["steve-plugin-web-interface@workspace:packages/plugins/web"],
 

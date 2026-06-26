@@ -151,6 +151,33 @@ private func imsgNormalize(_ raw: String, _ kind: IMsgKind) -> String {
   return trimmed
 }
 
+private func imsgPhoneDigits(_ raw: String) -> String {
+  var out = ""
+  out.reserveCapacity(raw.count)
+
+  for ch in raw {
+    if ch >= "0" && ch <= "9" {
+      out.append(ch)
+    }
+  }
+
+  return out
+}
+
+// Compare phone numbers on their last 10 digits (the US national significant
+// number). This collapses country-code and formatting differences between a
+// chat handle and the stored contact, and is only consulted after an exact
+// full-digit match misses.
+private let imsgPhoneTailLength = 10
+
+private func imsgPhoneTail(_ digits: String) -> String {
+  if digits.count <= imsgPhoneTailLength {
+    return digits
+  }
+
+  return String(digits.suffix(imsgPhoneTailLength))
+}
+
 private func imsgContactName(_ contact: CNContact) -> String {
   let full = CNContactFormatter.string(from: contact, style: .fullName)
   if full != nil {
@@ -238,6 +265,52 @@ public func imsg_contacts_resolve(
     CNContactEmailAddressesKey as CNKeyDescriptor,
   ]
   let store = CNContactStore()
+
+  // Enumerate every contact exactly once and index it by email and by phone
+  // (full digits, and the last-10-digit tail). Resolving each handle is then an
+  // in-memory dictionary lookup. The previous implementation ran one Contacts
+  // query per handle plus a full-store enumeration for every miss — O(handles ×
+  // contacts), tens of seconds on a large account; this is one enumeration plus
+  // O(handles) lookups.
+  var byEmail: [String: [CNContact]] = [:]
+  var byPhoneFull: [String: [CNContact]] = [:]
+  var byPhoneTail: [String: [CNContact]] = [:]
+
+  func index(
+    _ table: inout [String: [CNContact]],
+    _ key: String,
+    _ contact: CNContact
+  ) {
+    if key.isEmpty {
+      return
+    }
+
+    if var list = table[key] {
+      if !list.contains(where: { $0.identifier == contact.identifier }) {
+        list.append(contact)
+        table[key] = list
+      }
+    } else {
+      table[key] = [contact]
+    }
+  }
+
+  let request = CNContactFetchRequest(keysToFetch: keys)
+  try? store.enumerateContacts(with: request) { contact, _ in
+    for email in contact.emailAddresses {
+      let value = String(email.value)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+      index(&byEmail, value, contact)
+    }
+
+    for phone in contact.phoneNumbers {
+      let digits = imsgPhoneDigits(phone.value.stringValue)
+      index(&byPhoneFull, digits, contact)
+      index(&byPhoneTail, imsgPhoneTail(digits), contact)
+    }
+  }
+
   var rows: [IMsgRow] = []
   rows.reserveCapacity(Int(count))
 
@@ -250,63 +323,6 @@ public func imsg_contacts_resolve(
     let input = String(cString: item)
     let kind = imsgResolveKind(input)
     let canonical = imsgNormalize(input, kind)
-    var contacts: [CNContact] = []
-
-    if kind == .email {
-      let predicate = CNContact.predicateForContacts(matchingEmailAddress: canonical)
-      let fetched = try? store.unifiedContacts(matching: predicate, keysToFetch: keys)
-      contacts = fetched ?? []
-
-      if contacts.isEmpty {
-        let req = CNContactFetchRequest(keysToFetch: keys)
-        let lower = canonical.lowercased()
-        try? store.enumerateContacts(with: req) { contact, stop in
-          for item in contact.emailAddresses {
-            let value = String(item.value).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if value != lower {
-              continue
-            }
-
-            contacts.append(contact)
-            stop.pointee = true
-            return
-          }
-        }
-      }
-    }
-
-    if kind == .phone {
-      let phone = CNPhoneNumber(stringValue: canonical)
-      let predicate = CNContact.predicateForContacts(matching: phone)
-      let fetched = try? store.unifiedContacts(matching: predicate, keysToFetch: keys)
-      contacts = fetched ?? []
-
-      if contacts.isEmpty {
-        var target = canonical
-        target = target.replacingOccurrences(of: "+", with: "")
-        let req = CNContactFetchRequest(keysToFetch: keys)
-
-        try? store.enumerateContacts(with: req) { contact, stop in
-          for item in contact.phoneNumbers {
-            var value = item.value.stringValue
-            value = value.replacingOccurrences(of: "+", with: "")
-            value = value.filter { $0 >= "0" && $0 <= "9" }
-
-            if value == target {
-              contacts.append(contact)
-              stop.pointee = true
-              return
-            }
-
-            if value.hasSuffix(target) || target.hasSuffix(value) {
-              contacts.append(contact)
-              stop.pointee = true
-              return
-            }
-          }
-        }
-      }
-    }
 
     if kind == .im {
       rows.append(
@@ -321,6 +337,16 @@ public func imsg_contacts_resolve(
         )
       )
       continue
+    }
+
+    var contacts: [CNContact] = []
+    if kind == .email {
+      contacts = byEmail[canonical.lowercased()] ?? []
+    } else if kind == .phone {
+      let digits = imsgPhoneDigits(canonical)
+      if !digits.isEmpty {
+        contacts = byPhoneFull[digits] ?? byPhoneTail[imsgPhoneTail(digits)] ?? []
+      }
     }
 
     if contacts.isEmpty {

@@ -12,6 +12,7 @@ const DEFAULT_LIST_LIMIT = 20;
 const DEFAULT_HISTORY_LIMIT = 50;
 const DEFAULT_DEBOUNCE_MS = 250;
 const DEFAULT_BATCH_LIMIT = 100;
+const SEND_TIMEOUT_MS = 20_000;
 
 type Runner = (source: string, args: readonly string[]) => void;
 type Subscriber = (message: Message) => void;
@@ -77,6 +78,33 @@ export const Message = z.object({
 
 export type Message = z.infer<typeof Message>;
 
+export const Attachment = z.object({
+  id: z.number().int().nonnegative(),
+  messageId: z.number().int().nonnegative(),
+  mime: z.string(),
+  name: z.string(),
+  kind: z.enum(["image", "video", "audio", "other"]),
+});
+
+export type Attachment = z.infer<typeof Attachment>;
+
+// A person/group collapsed across the separate chat rows Apple keeps per
+// transport (SMS, RCS, iMessage, …). `chatIds` are every underlying row;
+// `sendChatId` is the most recently active one ("last service used").
+export const Conversation = z.object({
+  id: z.string(),
+  chatIds: z.array(z.number().int().nonnegative()).min(1),
+  sendChatId: z.number().int().nonnegative(),
+  identifier: z.string(),
+  name: z.string(),
+  isGroup: z.boolean(),
+  participants: z.array(z.string()),
+  service: z.string(),
+  lastMessageAt: z.date(),
+});
+
+export type Conversation = z.infer<typeof Conversation>;
+
 export const Options = z.object({
   dbPath: z
     .string()
@@ -92,10 +120,24 @@ export type Options = z.infer<typeof Options>;
 
 export interface IClient {
   list(limit?: number): Chat[];
+  conversations(limit?: number): Conversation[];
+  conversation(id: string): Conversation | null;
+  conversationByChat(chatId: number): Conversation | null;
   send(chatId: number, text: string): void;
-  history(chatId: number, limit?: number, reverse?: boolean): Message[];
+  sent(chatIds: number[], afterRowId: number, text: string): Message | null;
+  history(
+    chatId: number,
+    limit?: number,
+    reverse?: boolean,
+    before?: number,
+  ): Message[];
+  historyAcross(chatIds: number[], limit?: number, before?: number): Message[];
+  after(afterRowId: number, limit?: number): Message[];
+  latestRowId(): number;
   latestMessageAt(): Date;
   since(cursor: Date, limit?: number): Message[];
+  attachments(messageIds: number[]): Attachment[];
+  attachmentPath(id: number): string | null;
   subscribe(fn: Subscriber): () => void;
   close(): void;
 }
@@ -126,6 +168,51 @@ type MessageRow = {
   destinationCallerId: string | null;
   attributedBody: Uint8Array | ArrayBuffer | string | null;
 };
+
+type AttachmentRow = {
+  id: bigint | number;
+  messageId: bigint | number;
+  mime: string | null;
+  name: string | null;
+  filename: string | null;
+};
+
+function attachmentKind(
+  mime: string | null,
+  filename: string | null,
+): Attachment["kind"] {
+  const type = (mime ?? "").toLowerCase();
+  if (type.startsWith("image/")) return "image";
+  if (type.startsWith("video/")) return "video";
+  if (type.startsWith("audio/")) return "audio";
+
+  const ext = (filename ?? "").toLowerCase().split(".").pop() ?? "";
+  if (["jpg", "jpeg", "png", "gif", "heic", "heif", "tiff", "webp"].includes(ext))
+    return "image";
+  if (["mov", "mp4", "m4v", "3gp"].includes(ext)) return "video";
+  if (["m4a", "caf", "amr", "aac", "wav", "mp3"].includes(ext)) return "audio";
+  return "other";
+}
+
+function expandHome(value: string): string {
+  if (value.startsWith("~")) {
+    return path.join(process.env.HOME ?? "", value.slice(1));
+  }
+  return value;
+}
+
+// Canonical form of a phone/email handle, used to decide whether two chat rows
+// belong to the same person/group. Emails lowercased; phones reduced to digits
+// with a single leading "+". Good enough to merge SMS/RCS/iMessage rows that
+// share a recipient without depending on Contacts.
+function normalizeHandle(value: string): string {
+  const raw = value.trim();
+  if (raw.length === 0) return "";
+  if (raw.includes("@")) return raw.toLowerCase();
+
+  const digits = raw.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+  return digits.length > 0 ? digits : raw.toLowerCase();
+}
 
 let asbridgeRunner: Runner | null | undefined;
 
@@ -320,7 +407,11 @@ function looksLikeHandle(value: string): boolean {
 }
 
 function mapService(value: string): "sms" | "imessage" {
-  if (value.toLowerCase().includes("sms")) {
+  const lower = value.toLowerCase();
+
+  // Anything carried over the cellular network (SMS, MMS, RCS) is sent through
+  // the AppleScript "SMS" service. Only the iMessage family maps to iMessage.
+  if (lower.includes("sms") || lower.includes("rcs")) {
     return "sms";
   }
 
@@ -333,11 +424,22 @@ class SQLiteClient implements IClient {
   private readonly hasAttributedBody: boolean;
   private readonly hasAssociatedMessageType: boolean;
   private readonly hasDestinationCallerID: boolean;
+  private readonly hasGroupId: boolean;
+  private readonly hasStyle: boolean;
   private readonly watchedFiles: Set<string>;
+  private readonly watchedPaths: string[];
   private readonly subscribers = new Set<Subscriber>();
   private watcher: fs.FSWatcher | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private cursor = 0;
+  // The conversation merge is pure over the message set, so it only changes when
+  // a new message lands. Memoize it against the latest ROWID and rebuild lazily.
+  private convCache: {
+    rowId: number;
+    list: Conversation[];
+    byId: Map<string, Conversation>;
+    byChat: Map<number, string>;
+  } | null = null;
 
   constructor(options: Partial<Options> = {}) {
     this.options = Options.parse(options);
@@ -350,11 +452,17 @@ class SQLiteClient implements IClient {
     this.hasAttributedBody = columns.has("attributedbody");
     this.hasAssociatedMessageType = columns.has("associated_message_type");
     this.hasDestinationCallerID = columns.has("destination_caller_id");
+    const chatCols = this.chatColumns();
+    this.hasGroupId = chatCols.has("group_id");
+    this.hasStyle = chatCols.has("style");
     this.watchedFiles = new Set<string>([
       path.basename(this.options.dbPath),
       `${path.basename(this.options.dbPath)}-wal`,
       `${path.basename(this.options.dbPath)}-shm`,
     ]);
+    this.watchedPaths = Array.from(this.watchedFiles, (file) =>
+      path.join(path.dirname(this.options.dbPath), file),
+    );
   }
 
   list(limit = DEFAULT_LIST_LIMIT): Chat[] {
@@ -389,13 +497,222 @@ class SQLiteClient implements IClient {
     });
   }
 
+  conversations(limit?: number): Conversation[] {
+    const { list } = this.conversationIndex();
+    return limit == null ? list : list.slice(0, parseLimit(limit, list.length));
+  }
+
+  conversation(id: string): Conversation | null {
+    return this.conversationIndex().byId.get(id) ?? null;
+  }
+
+  conversationByChat(chatId: number): Conversation | null {
+    const index = this.conversationIndex();
+    const id = index.byChat.get(toNumber(chatId));
+    return id == null ? null : (index.byId.get(id) ?? null);
+  }
+
+  // Memoized conversation merge. Recomputes only when the newest ROWID moves,
+  // so repeated reads (every history fetch, every live event's chat→id lookup)
+  // are O(1) between messages instead of two table scans + a full merge.
+  private conversationIndex(): NonNullable<SQLiteClient["convCache"]> {
+    const rowId = this.maxRowID();
+    if (this.convCache && this.convCache.rowId === rowId) {
+      return this.convCache;
+    }
+
+    const list = this.mergeConversations();
+    const byId = new Map<string, Conversation>();
+    const byChat = new Map<number, string>();
+    for (const conversation of list) {
+      byId.set(conversation.id, conversation);
+      for (const chatId of conversation.chatIds) {
+        byChat.set(chatId, conversation.id);
+      }
+    }
+
+    this.convCache = { rowId, list, byId, byChat };
+    return this.convCache;
+  }
+
+  private mergeConversations(): Conversation[] {
+    const styleColumn = this.hasStyle ? "c.style" : "0";
+    const groupIdColumn = this.hasGroupId ? "IFNULL(c.group_id, '')" : "''";
+    const chats = this.db
+      .query(
+        `
+          SELECT
+            c.ROWID AS id,
+            ${styleColumn} AS style,
+            ${groupIdColumn} AS groupId,
+            IFNULL(c.chat_identifier, '') AS identifier,
+            IFNULL(c.display_name, '') AS name,
+            IFNULL(c.service_name, '') AS service,
+            MAX(m.date) AS lastDate
+          FROM chat c
+          JOIN chat_message_join cmj ON c.ROWID = cmj.chat_id
+          JOIN message m ON m.ROWID = cmj.message_id
+          GROUP BY c.ROWID
+        `,
+      )
+      .all() as Array<{
+      id: bigint | number;
+      style: bigint | number | null;
+      groupId: string;
+      identifier: string;
+      name: string;
+      service: string;
+      lastDate: bigint | number | null;
+    }>;
+
+    const handleRows = this.db
+      .query(
+        `
+          SELECT chj.chat_id AS chatId, h.id AS handle
+          FROM chat_handle_join chj
+          JOIN handle h ON h.ROWID = chj.handle_id
+        `,
+      )
+      .all() as Array<{ chatId: bigint | number; handle: string | null }>;
+
+    const membersByChat = new Map<number, string[]>();
+    for (const row of handleRows) {
+      const chatId = toNumber(row.chatId);
+      const handle = (row.handle ?? "").trim();
+      if (handle.length === 0) continue;
+      const list = membersByChat.get(chatId) ?? [];
+      list.push(handle);
+      membersByChat.set(chatId, list);
+    }
+
+    type Group = {
+      chatIds: number[];
+      sendChatId: number;
+      sendDate: number;
+      identifier: string;
+      name: string;
+      isGroup: boolean;
+      participants: string[];
+      service: string;
+      lastDate: number;
+    };
+
+    const groups = new Map<string, Group>();
+
+    for (const chat of chats) {
+      const id = toNumber(chat.id);
+      const isGroup = toNumber(chat.style) === 43;
+      const members =
+        membersByChat.get(id) ??
+        (chat.identifier.length > 0 ? [chat.identifier] : []);
+      const key = this.conversationKey(isGroup, chat.groupId, members, id);
+      const lastDate = toNumber(chat.lastDate);
+
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, {
+          chatIds: [id],
+          sendChatId: id,
+          sendDate: lastDate,
+          identifier: chat.identifier,
+          name: chat.name,
+          isGroup,
+          participants: members,
+          service: chat.service,
+          lastDate,
+        });
+        continue;
+      }
+
+      existing.chatIds.push(id);
+      if (existing.name.length === 0 && chat.name.length > 0) {
+        existing.name = chat.name;
+      }
+      if (members.length > existing.participants.length) {
+        existing.participants = members;
+      }
+      // "Last service used": the most recently active row wins for sending.
+      if (lastDate > existing.sendDate) {
+        existing.sendChatId = id;
+        existing.sendDate = lastDate;
+        existing.service = chat.service;
+        existing.identifier = chat.identifier;
+      }
+      if (lastDate > existing.lastDate) {
+        existing.lastDate = lastDate;
+      }
+    }
+
+    return Array.from(groups.entries())
+      .sort((a, b) => b[1].lastDate - a[1].lastDate)
+      .map(([key, group]) =>
+        Conversation.parse({
+          id: key,
+          chatIds: group.chatIds,
+          sendChatId: group.sendChatId,
+          identifier: group.identifier,
+          name: group.name,
+          isGroup: group.isGroup,
+          participants: group.participants,
+          service: group.service,
+          lastMessageAt: toDate(group.lastDate),
+        }),
+      );
+  }
+
+  // Stable identity for a conversation across its per-transport chat rows.
+  // Groups key on Apple's own `group_id` (stable when members are added or
+  // removed — a member-set hash is not); 1:1s key on the normalized handle so
+  // SMS/RCS/iMessage rows for the same person collapse. Both fall back to the
+  // chat ROWID only when no better identifier exists.
+  private conversationKey(
+    isGroup: boolean,
+    groupId: string,
+    members: string[],
+    chatId: number,
+  ): string {
+    if (isGroup) {
+      const stable = groupId.trim();
+      return `g:${stable.length > 0 ? stable : `chat${chatId}`}`;
+    }
+
+    const normalized = members
+      .map(normalizeHandle)
+      .filter((value) => value.length > 0)
+      .sort();
+    return `d:${normalized.length > 0 ? normalized.join("|") : `chat${chatId}`}`;
+  }
+
+  // The (date, ROWID) sort key of a message, used as a keyset-pagination cursor.
+  // History is ordered by date — what a chat UI shows — with ROWID only as a
+  // tiebreaker, so the cursor must carry both to be a total order; paginating by
+  // date alone would skip or repeat messages that share a timestamp, and by
+  // ROWID alone would display backfilled/synced messages out of order.
+  private messageSortKey(
+    rowId: number,
+  ): { date: bigint | number; rowId: number } | null {
+    const row = this.db
+      .query("SELECT m.date AS date FROM message m WHERE m.ROWID = ?1 LIMIT 1")
+      .get(rowId) as { date: bigint | number | null } | null;
+    if (row == null) {
+      return null;
+    }
+    return { date: row.date ?? 0, rowId };
+  }
+
   history(
     chatId: number,
     limit = DEFAULT_HISTORY_LIMIT,
     reverse = false,
+    before?: number,
   ): Message[] {
     const id = ChatID.parse(chatId);
     const count = parseLimit(limit, DEFAULT_HISTORY_LIMIT);
+    const sort =
+      before == null ? null : this.messageSortKey(parseLimit(before, 1));
+    if (before != null && sort == null) {
+      return [];
+    }
     const bodyColumn = this.hasAttributedBody ? "m.attributedBody" : "NULL";
     const destinationColumn = this.hasDestinationCallerID
       ? "m.destination_caller_id"
@@ -403,10 +720,13 @@ class SQLiteClient implements IClient {
     const reactionFilter = this.hasAssociatedMessageType
       ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
       : "";
+    // `before` always means "older than", independent of display order.
+    const cursorFilter =
+      sort == null
+        ? ""
+        : " AND (m.date < ?3 OR (m.date = ?3 AND m.ROWID < ?4))";
     const order = reverse ? "ASC" : "DESC";
-    const rows = this.db
-      .query(
-        `
+    const sql = `
           SELECT
             m.ROWID AS id,
             cmj.chat_id AS chatId,
@@ -420,14 +740,156 @@ class SQLiteClient implements IClient {
           FROM message m
           JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
           LEFT JOIN handle h ON m.handle_id = h.ROWID
-          WHERE cmj.chat_id = ?1${reactionFilter}
-          ORDER BY m.date ${order}
+          WHERE cmj.chat_id = ?1${reactionFilter}${cursorFilter}
+          ORDER BY m.date ${order}, m.ROWID ${order}
           LIMIT ?2
-        `,
-      )
-      .all(id, count) as MessageRow[];
+        `;
+    const query = this.db.query(sql);
+    const rows = (
+      sort == null
+        ? query.all(id, count)
+        : query.all(id, count, sort.date, sort.rowId)
+    ) as MessageRow[];
 
     return rows.map((row) => this.parseMessage(row));
+  }
+
+  // Merged history across several chat rows (the transports of one
+  // conversation), newest-first. Ordered by message date with ROWID as a
+  // tiebreaker, and paginated by that same (date, ROWID) keyset cursor — so the
+  // page boundary can never disagree with the display order. Uses a subquery
+  // membership test rather than a join so a message can't appear twice.
+  historyAcross(
+    chatIds: number[],
+    limit = DEFAULT_HISTORY_LIMIT,
+    before?: number,
+  ): Message[] {
+    const ids = chatIds
+      .map((value) => ChatID.parse(value))
+      .filter((value) => value > 0);
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const count = parseLimit(limit, DEFAULT_HISTORY_LIMIT);
+    const sort =
+      before == null ? null : this.messageSortKey(parseLimit(before, 1));
+    if (before != null && sort == null) {
+      return [];
+    }
+    const bodyColumn = this.hasAttributedBody ? "m.attributedBody" : "NULL";
+    const destinationColumn = this.hasDestinationCallerID
+      ? "m.destination_caller_id"
+      : "NULL";
+    const reactionFilter = this.hasAssociatedMessageType
+      ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
+      : "";
+    const chatPlaceholders = ids.map((_, idx) => `?${idx + 1}`).join(", ");
+    const limitParam = ids.length + 1;
+    const dateParam = ids.length + 2;
+    const rowParam = ids.length + 3;
+    const cursorFilter =
+      sort == null
+        ? ""
+        : ` AND (m.date < ?${dateParam} OR (m.date = ?${dateParam} AND m.ROWID < ?${rowParam}))`;
+    const sql = `
+          SELECT
+            m.ROWID AS id,
+            (
+              SELECT cmj.chat_id FROM chat_message_join cmj
+              WHERE cmj.message_id = m.ROWID LIMIT 1
+            ) AS chatId,
+            h.id AS sender,
+            IFNULL(m.text, '') AS text,
+            m.date AS createdAtNs,
+            m.is_from_me AS isFromMe,
+            m.service AS service,
+            ${destinationColumn} AS destinationCallerId,
+            ${bodyColumn} AS attributedBody
+          FROM message m
+          LEFT JOIN handle h ON m.handle_id = h.ROWID
+          WHERE m.ROWID IN (
+            SELECT message_id FROM chat_message_join
+            WHERE chat_id IN (${chatPlaceholders})
+          )${reactionFilter}${cursorFilter}
+          ORDER BY m.date DESC, m.ROWID DESC
+          LIMIT ?${limitParam}
+        `;
+    const params =
+      sort == null
+        ? [...ids, count]
+        : [...ids, count, sort.date, sort.rowId];
+    const rows = this.db.query(sql).all(...params) as MessageRow[];
+
+    return rows.map((row) => this.parseMessage(row));
+  }
+
+  // Messages newer than `afterRowId`, oldest-first. Used to replay the gap to a
+  // reconnecting event stream (the consumer hands back the last ROWID it saw).
+  after(afterRowId: number, limit = DEFAULT_BATCH_LIMIT): Message[] {
+    const count = parseLimit(limit, DEFAULT_BATCH_LIMIT);
+    return this.selectAfter(Math.max(0, Math.floor(afterRowId)), count);
+  }
+
+  // The newest message ROWID. ROWID is assigned at insert, so this is the
+  // monotonic cursor used for live tailing and send confirmation.
+  latestRowId(): number {
+    return this.maxRowID();
+  }
+
+  // After handing a message to Messages.app we can't get its ROWID back from
+  // AppleScript, so we look it up: the first outgoing message in this
+  // conversation's chat rows newer than `afterRowId` whose text matches. The
+  // caller captures `afterRowId` immediately before sending, which bounds the
+  // search to rows this send could have produced. Returns null if it hasn't
+  // been written yet (the caller polls).
+  sent(chatIds: number[], afterRowId: number, text: string): Message | null {
+    const ids = chatIds
+      .map((value) => ChatID.parse(value))
+      .filter((value) => value > 0);
+    if (ids.length === 0) {
+      return null;
+    }
+
+    const after = Math.max(0, Math.floor(afterRowId));
+    const wanted = text.trim();
+    const bodyColumn = this.hasAttributedBody ? "m.attributedBody" : "NULL";
+    const destinationColumn = this.hasDestinationCallerID
+      ? "m.destination_caller_id"
+      : "NULL";
+    const placeholders = ids.map((_, idx) => `?${idx + 2}`).join(", ");
+    const rows = this.db
+      .query(
+        `
+          SELECT
+            m.ROWID AS id,
+            (
+              SELECT cmj.chat_id FROM chat_message_join cmj
+              WHERE cmj.message_id = m.ROWID LIMIT 1
+            ) AS chatId,
+            h.id AS sender,
+            IFNULL(m.text, '') AS text,
+            m.date AS createdAtNs,
+            m.is_from_me AS isFromMe,
+            m.service AS service,
+            ${destinationColumn} AS destinationCallerId,
+            ${bodyColumn} AS attributedBody
+          FROM message m
+          LEFT JOIN handle h ON m.handle_id = h.ROWID
+          WHERE m.ROWID > ?1
+            AND m.is_from_me = 1
+            AND m.ROWID IN (
+              SELECT message_id FROM chat_message_join
+              WHERE chat_id IN (${placeholders})
+            )
+          ORDER BY m.ROWID ASC
+          LIMIT 25
+        `,
+      )
+      .all(after, ...ids) as MessageRow[];
+
+    const candidates = rows.map((row) => this.parseMessage(row));
+    return candidates.find((message) => message.text.trim() === wanted) ?? null;
   }
 
   latestMessageAt(): Date {
@@ -476,6 +938,59 @@ class SQLiteClient implements IClient {
     return rows.map((row) => this.parseMessage(row));
   }
 
+  attachments(messageIds: number[]): Attachment[] {
+    const ids = messageIds
+      .map((value) => ChatID.parse(value))
+      .filter((value) => value > 0);
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const placeholders = ids.map((_, idx) => `?${idx + 1}`).join(", ");
+    const rows = this.db
+      .query(
+        `
+          SELECT
+            a.ROWID AS id,
+            maj.message_id AS messageId,
+            a.mime_type AS mime,
+            IFNULL(NULLIF(a.transfer_name, ''), a.filename) AS name,
+            a.filename AS filename
+          FROM message_attachment_join maj
+          JOIN attachment a ON a.ROWID = maj.attachment_id
+          WHERE maj.message_id IN (${placeholders})
+            AND a.filename IS NOT NULL
+            AND IFNULL(a.is_sticker, 0) = 0
+            AND IFNULL(a.filename, '') NOT LIKE '%.pluginPayloadAttachment'
+          ORDER BY a.ROWID ASC
+        `,
+      )
+      .all(...ids) as AttachmentRow[];
+
+    return rows.map((row) =>
+      Attachment.parse({
+        id: toNumber(row.id),
+        messageId: toNumber(row.messageId),
+        mime: row.mime ?? "",
+        name: path.basename(row.name ?? "") || "attachment",
+        kind: attachmentKind(row.mime, row.filename),
+      }),
+    );
+  }
+
+  attachmentPath(id: number): string | null {
+    const attachmentId = ChatID.parse(id);
+    const row = this.db
+      .query("SELECT filename FROM attachment WHERE ROWID = ?1 LIMIT 1")
+      .get(attachmentId) as { filename: string | null } | null;
+
+    if (!row?.filename) {
+      return null;
+    }
+
+    return expandHome(row.filename);
+  }
+
   send(chatId: number, text: string): void {
     const id = ChatID.parse(chatId);
     const content = Text.parse(text);
@@ -499,23 +1014,109 @@ class SQLiteClient implements IClient {
     }
 
     const identifier = (row.identifier ?? "").trim();
-    const guid = (row.guid ?? "").trim();
-    const service = mapService(row.service ?? "");
-    const handle = looksLikeHandle(identifier) ? identifier : "";
-    const chatTarget = guid || identifier;
-    const useChat = handle.length === 0;
+    const service = this.resolveSendService(identifier, row.service ?? "");
 
-    if (useChat && chatTarget.length === 0) {
+    // Prefer sending to an existing chat thread by guid. A guid encodes its
+    // transport (e.g. "SMS;-;+15551234567" vs "iMessage;-;+15551234567"), so
+    // Messages binds the right service without us going through the SMS "buddy"
+    // path — that path depends on enumerating Messages services/accounts, which
+    // errors out (-1728) and hangs on modern macOS. Fall back to the referenced
+    // row's own guid, and only then to the buddy path.
+    const guid =
+      this.resolveSendGuid(identifier, service) || (row.guid ?? "").trim();
+
+    if (guid.length > 0) {
+      this.execAppleScript(SendScript, ["", content, service, guid, "1"]);
+      return;
+    }
+
+    const handle = looksLikeHandle(identifier) ? identifier : "";
+
+    if (handle.length === 0) {
       throw new Error(`Chat ${id} has no sendable identifier`);
     }
 
-    this.execAppleScript(SendScript, [
-      handle,
-      content,
-      service,
-      useChat ? chatTarget : "",
-      useChat ? "1" : "0",
-    ]);
+    this.execAppleScript(SendScript, [handle, content, service, "", "0"]);
+  }
+
+  // Picks the chat guid to send to for the resolved service. A person often has
+  // separate SMS/RCS/iMessage chat rows for the same handle, so we choose the
+  // thread whose transport matches `service` rather than whichever row the
+  // caller referenced. For carrier sends we prefer the canonical "SMS" thread
+  // (Messages upgrades to RCS automatically when available). When no matching
+  // thread exists for a 1:1 handle we synthesize the guid, which Messages
+  // accepts; for anything else (e.g. group chats) we return "" so the caller
+  // falls back to the referenced row's guid.
+  private resolveSendGuid(
+    identifier: string,
+    service: "sms" | "imessage",
+  ): string {
+    if (identifier.length === 0) {
+      return "";
+    }
+
+    const rows = this.db
+      .query(
+        `
+          SELECT IFNULL(c.guid, '') AS guid, IFNULL(c.service_name, '') AS service
+          FROM chat c
+          WHERE c.chat_identifier = ?1 AND IFNULL(c.guid, '') <> ''
+        `,
+      )
+      .all(identifier) as { guid: string; service: string }[];
+
+    const matches = rows.filter((r) => mapService(r.service) === service);
+    const chosen =
+      (service === "sms"
+        ? matches.find((r) => r.service.toLowerCase() === "sms")
+        : undefined) ?? matches[0];
+
+    if (chosen != null) {
+      return chosen.guid.trim();
+    }
+
+    if (looksLikeHandle(identifier)) {
+      return `${service === "sms" ? "SMS" : "iMessage"};-;${identifier}`;
+    }
+
+    return "";
+  }
+
+  // Determines which service to send over for a 1:1 recipient. A chat row's
+  // service_name is unreliable: a single person can have separate SMS, RCS, and
+  // iMessage chat rows, and the row the caller happens to reference may not be
+  // the one that actually reaches them. The real signal is the most recent
+  // message that genuinely succeeded — received, or sent without error. Failed
+  // sends (e.g. an iMessage that bounced with an error) are excluded so a prior
+  // failure can't pin us to a service that doesn't work. Falls back to the
+  // chat row's service_name when there is no usable history.
+  private resolveSendService(
+    handle: string,
+    fallback: string,
+  ): "sms" | "imessage" {
+    if (handle.length > 0) {
+      const recent = this.db
+        .query(
+          `
+            SELECT m.service AS service
+            FROM message m
+            JOIN handle h ON h.ROWID = m.handle_id
+            WHERE h.id = ?1
+              AND m.error = 0
+              AND (m.is_from_me = 0 OR m.is_sent = 1)
+              AND IFNULL(m.service, '') <> ''
+            ORDER BY m.date DESC
+            LIMIT 1
+          `,
+        )
+        .get(handle) as { service: string | null } | null;
+
+      if (recent?.service != null && recent.service.length > 0) {
+        return mapService(recent.service);
+      }
+    }
+
+    return mapService(fallback);
   }
 
   subscribe(fn: Subscriber): () => void {
@@ -542,13 +1143,57 @@ class SQLiteClient implements IClient {
   }
 
   private messageColumns(): Set<string> {
+    return this.tableColumns("message");
+  }
+
+  private chatColumns(): Set<string> {
+    return this.tableColumns("chat");
+  }
+
+  private tableColumns(table: string): Set<string> {
     const rows = this.db
-      .query("SELECT name FROM pragma_table_info('message')")
+      .query(`SELECT name FROM pragma_table_info('${table}')`)
       .all() as Array<{
       name: string | null;
     }>;
 
     return new Set(rows.map((row) => (row.name ?? "").toLowerCase()));
+  }
+
+  // Messages with ROWID greater than `rowId`, oldest-first. Shared by the live
+  // tail (poll) and gap replay (after); both want strict ROWID order.
+  private selectAfter(rowId: number, limit: number): Message[] {
+    const reactionFilter = this.hasAssociatedMessageType
+      ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
+      : "";
+    const bodyColumn = this.hasAttributedBody ? "m.attributedBody" : "NULL";
+    const destinationColumn = this.hasDestinationCallerID
+      ? "m.destination_caller_id"
+      : "NULL";
+    const rows = this.db
+      .query(
+        `
+          SELECT
+            m.ROWID AS id,
+            cmj.chat_id AS chatId,
+            h.id AS sender,
+            IFNULL(m.text, '') AS text,
+            m.date AS createdAtNs,
+            m.is_from_me AS isFromMe,
+            m.service AS service,
+            ${destinationColumn} AS destinationCallerId,
+            ${bodyColumn} AS attributedBody
+          FROM message m
+          JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+          LEFT JOIN handle h ON m.handle_id = h.ROWID
+          WHERE m.ROWID > ?1${reactionFilter}
+          ORDER BY m.ROWID ASC
+          LIMIT ?2
+        `,
+      )
+      .all(rowId, limit) as MessageRow[];
+
+    return rows.map((row) => this.parseMessage(row));
   }
 
   private parseMessage(row: MessageRow): Message {
@@ -575,6 +1220,20 @@ class SQLiteClient implements IClient {
   private startWatcher(): void {
     if (this.watcher) {
       return;
+    }
+
+    // fs.watch (FSEvents on macOS) misses SQLite WAL/SHM writes — those files
+    // are memory-mapped and their change events get coalesced or dropped, so on
+    // its own the watcher silently fails to notice incoming messages. Poll the
+    // file mtimes as well; between the two we reliably catch every update.
+    for (const watchedPath of this.watchedPaths) {
+      fs.watchFile(watchedPath, { interval: 1000 }, (curr, prev) => {
+        if (curr.mtimeMs === prev.mtimeMs) {
+          return;
+        }
+
+        this.schedulePoll();
+      });
     }
 
     this.watcher = fs.watch(
@@ -605,6 +1264,10 @@ class SQLiteClient implements IClient {
       this.watcher.close();
       this.watcher = null;
     }
+
+    for (const watchedPath of this.watchedPaths) {
+      fs.unwatchFile(watchedPath);
+    }
   }
 
   private schedulePoll(): void {
@@ -623,47 +1286,17 @@ class SQLiteClient implements IClient {
       return;
     }
 
-    const reactionFilter = this.hasAssociatedMessageType
-      ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
-      : "";
-    const bodyColumn = this.hasAttributedBody ? "m.attributedBody" : "NULL";
-    const destinationColumn = this.hasDestinationCallerID
-      ? "m.destination_caller_id"
-      : "NULL";
     const batch = this.options.batchLimit;
     let shouldContinue = true;
 
     while (shouldContinue) {
-      const rows = this.db
-        .query(
-          `
-            SELECT
-              m.ROWID AS id,
-              cmj.chat_id AS chatId,
-              h.id AS sender,
-              IFNULL(m.text, '') AS text,
-              m.date AS createdAtNs,
-              m.is_from_me AS isFromMe,
-              m.service AS service,
-              ${destinationColumn} AS destinationCallerId,
-              ${bodyColumn} AS attributedBody
-            FROM message m
-            JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
-            LEFT JOIN handle h ON m.handle_id = h.ROWID
-            WHERE m.ROWID > ?1${reactionFilter}
-            ORDER BY m.ROWID ASC
-            LIMIT ?2
-          `,
-        )
-        .all(this.cursor, batch) as MessageRow[];
+      const messages = this.selectAfter(this.cursor, batch);
 
-      if (rows.length === 0) {
+      if (messages.length === 0) {
         return;
       }
 
-      for (const row of rows) {
-        const message = this.parseMessage(row);
-
+      for (const message of messages) {
         if (message.id > this.cursor) {
           this.cursor = message.id;
         }
@@ -677,7 +1310,7 @@ class SQLiteClient implements IClient {
         }
       }
 
-      shouldContinue = rows.length >= batch;
+      shouldContinue = messages.length >= batch;
     }
   }
 
@@ -703,8 +1336,21 @@ class SQLiteClient implements IClient {
       {
         input: source,
         encoding: "utf8",
+        timeout: SEND_TIMEOUT_MS,
+        killSignal: "SIGKILL",
       },
     );
+
+    // A timeout (osascript killed) surfaces as an ETIMEDOUT error and/or a
+    // termination signal. Turn it into a clear message instead of leaving the
+    // caller hanging — Messages scripting can stall indefinitely otherwise.
+    const errorCode = (result.error as (Error & { code?: string }) | undefined)
+      ?.code;
+    if (errorCode === "ETIMEDOUT" || result.signal != null) {
+      throw new Error(
+        `Messages did not respond within ${SEND_TIMEOUT_MS / 1000}s; the send may not have gone through`,
+      );
+    }
 
     if (result.error) {
       throw result.error;
