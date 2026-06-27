@@ -38,7 +38,8 @@
       "yargs": "^18.0.0",
       "@types/yargs": "^17.0.33",
       "@spader/node-whisper-cpp": "^0.2.2",
-      "zod": "^4.3.6"
+      "zod": "^4.3.6",
+      "@tanstack/solid-virtual": "^3.13.30"
     }
   },
   "scripts": {

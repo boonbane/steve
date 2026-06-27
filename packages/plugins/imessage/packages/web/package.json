@@ -13,6 +13,7 @@
   "dependencies": {
     "@steve/ui": "workspace:*",
     "steve-plugin-imessage-core": "workspace:*",
+    "@tanstack/solid-virtual": "catalog:",
     "consola": "catalog:",
     "solid-js": "^1.9.5"
   },

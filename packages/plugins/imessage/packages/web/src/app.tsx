@@ -11,6 +11,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import { Icon } from "@steve/ui/icon";
 import { Button } from "@steve/ui/button";
 
@@ -23,6 +24,15 @@ import {
   type Conversation,
   type Message,
 } from "./api";
+
+// A session-unique key for an optimistic message bubble, used only to match it
+// to the server's reply on the client. Deliberately not `crypto.randomUUID()`:
+// that exists only in a secure context, so it's absent when the app is reached
+// over plain HTTP on the tailnet (by IP or MagicDNS name) rather than localhost.
+let tempIdSeq = 0;
+function nextTempId(): string {
+  return `temp-${Date.now()}-${tempIdSeq++}`;
+}
 
 function label(conversation: Conversation): string {
   return conversation.name.trim() || conversation.identifier || "Unknown";
@@ -194,6 +204,23 @@ export default function App() {
       .map((match) => match.conversation);
   });
 
+  // The sidebar holds the entire conversation list in memory (so search/filter
+  // stay instant), but only the rows in view are mounted. `visible()` can be
+  // hundreds of entries; without windowing every one becomes a DOM node and a
+  // reconcile target on each keystroke. `count` is a getter so the virtualizer
+  // re-measures whenever the filtered list changes; row height is measured from
+  // the DOM (`measureElement`) so we don't hard-code the avatar/padding math.
+  let listScroller!: HTMLDivElement;
+  const rowVirtualizer = createVirtualizer({
+    get count() {
+      return visible().length;
+    },
+    getScrollElement: () => listScroller,
+    estimateSize: () => 58,
+    overscan: 8,
+    gap: 4, // mirrors the --space-1 gap the flex list used between rows
+  });
+
   const [messages, setMessages] = createSignal<Message[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [hasMore, setHasMore] = createSignal(false);
@@ -306,7 +333,7 @@ export default function App() {
     // Each optimistic bubble carries a temp id, so we can retire exactly the
     // right one when the server hands back the real message — never matching on
     // text (which collapses duplicate sends).
-    const tempId = crypto.randomUUID();
+    const tempId = nextTempId();
     setError(null);
     setDraft("");
     setPending((p) => [...p, { tempId, text }]);
@@ -369,7 +396,7 @@ export default function App() {
           </label>
         </div>
 
-        <div data-component="im-chat-list">
+        <div data-component="im-chat-list" ref={listScroller}>
           <Switch>
             <Match when={conversations.loading && list().length === 0}>
               <p data-component="im-hint">Loading chats…</p>
@@ -385,29 +412,56 @@ export default function App() {
               </p>
             </Match>
             <Match when={true}>
-              <For each={visible()}>
-                {(conversation) => (
-                  <button
-                    data-component="im-chat"
-                    data-active={
-                      active()?.id === conversation.id ? "true" : undefined
-                    }
-                    onClick={() => setActive(conversation)}
-                  >
-                    <span data-component="im-avatar">
-                      {initials(label(conversation))}
-                    </span>
-                    <span data-component="im-chat-meta">
-                      <span data-component="im-chat-name">
-                        {label(conversation)}
-                      </span>
-                      <span data-component="im-chat-sub">
-                        {time(conversation.lastMessageAt, true)}
-                      </span>
-                    </span>
-                  </button>
-                )}
-              </For>
+              {/* Spacer sized to the full list so the scrollbar reflects every
+                  conversation; only the windowed rows below are mounted, each
+                  absolutely positioned at its computed offset. */}
+              <div
+                style={{
+                  position: "relative",
+                  width: "100%",
+                  height: `${rowVirtualizer.getTotalSize()}px`,
+                }}
+              >
+                <For each={rowVirtualizer.getVirtualItems()}>
+                  {(row) => {
+                    const conversation = () => visible()[row.index];
+                    return (
+                      <Show when={conversation()}>
+                        <button
+                          data-component="im-chat"
+                          data-index={row.index}
+                          ref={(el) => rowVirtualizer.measureElement(el)}
+                          data-active={
+                            active()?.id === conversation()!.id
+                              ? "true"
+                              : undefined
+                          }
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            width: "100%",
+                            transform: `translateY(${row.start}px)`,
+                          }}
+                          onClick={() => setActive(conversation()!)}
+                        >
+                          <span data-component="im-avatar">
+                            {initials(label(conversation()!))}
+                          </span>
+                          <span data-component="im-chat-meta">
+                            <span data-component="im-chat-name">
+                              {label(conversation()!)}
+                            </span>
+                            <span data-component="im-chat-sub">
+                              {time(conversation()!.lastMessageAt, true)}
+                            </span>
+                          </span>
+                        </button>
+                      </Show>
+                    );
+                  }}
+                </For>
+              </div>
             </Match>
           </Switch>
         </div>

@@ -75,11 +75,30 @@ type MessageDTO = {
   attachments: Attachment[];
 };
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+// Bodies smaller than this aren't worth the gzip CPU (and can come out larger
+// than the original once you add the gzip framing).
+const GZIP_MIN_BYTES = 1024;
+
+// Gzip the JSON when the client advertises support and the body is big enough to
+// pay for it; otherwise send it plain. The conversation list alone is ~184KB raw
+// and ~35KB gzipped, so this is the difference that matters. SSE doesn't route
+// through here, so the live stream is untouched.
+function json(data: unknown, status = 200, req?: Request): Response {
+  const body = new TextEncoder().encode(JSON.stringify(data));
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+
+  const acceptsGzip = (req?.headers.get("accept-encoding") ?? "")
+    .toLowerCase()
+    .includes("gzip");
+  if (acceptsGzip && body.byteLength >= GZIP_MIN_BYTES) {
+    headers["content-encoding"] = "gzip";
+    headers["vary"] = "accept-encoding";
+    return new Response(Bun.gzipSync(body), { status, headers });
+  }
+
+  return new Response(body, { status, headers });
 }
 
 // Resolve a display name for each conversation: a group keeps its own name if
@@ -201,8 +220,8 @@ function serveAttachment(id: number): Response {
 // (SMS/RCS/iMessage), newest first. Metadata only (no message bodies), so the
 // client can hold the whole list for instant search/filter; messages load on
 // demand. The merge is memoized in core, so this is cheap to call repeatedly.
-function listConversations(): Response {
-  return json(enrichConversations(client.conversations()));
+function listConversations(req: Request): Response {
+  return json(enrichConversations(client.conversations()), 200, req);
 }
 
 // GET /api/conversations/:id — a single conversation by its stable id.
@@ -218,7 +237,11 @@ function getConversation(rawId: string): Response {
 // One page of history for a conversation, oldest message first. `before` is a
 // message id (an opaque pagination cursor); pass the oldest id you hold to get
 // the previous page.
-function getMessages(rawId: string, params: URLSearchParams): Response {
+function getMessages(
+  rawId: string,
+  params: URLSearchParams,
+  req: Request,
+): Response {
   const conversation = client.conversation(decodeURIComponent(rawId));
   if (!conversation) {
     return json({ error: "conversation not found" }, 404);
@@ -231,7 +254,7 @@ function getMessages(rawId: string, params: URLSearchParams): Response {
   const page = client
     .historyAcross(conversation.chatIds, limit, before)
     .reverse();
-  return json(enrichMessages(page, conversation.id));
+  return json(enrichMessages(page, conversation.id), 200, req);
 }
 
 // POST /api/conversations/:id/messages  { text }
@@ -386,13 +409,14 @@ function main(): void {
     idleTimeout: 255,
     routes: {
       "/api/conversations": {
-        GET: () => listConversations(),
+        GET: (req) => listConversations(req),
       },
       "/api/conversations/:id": {
         GET: (req) => getConversation(req.params.id),
       },
       "/api/conversations/:id/messages": {
-        GET: (req) => getMessages(req.params.id, new URL(req.url).searchParams),
+        GET: (req) =>
+          getMessages(req.params.id, new URL(req.url).searchParams, req),
         POST: (req) => postMessage(req.params.id, req),
       },
       "/api/events": {

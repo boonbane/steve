@@ -67,10 +67,12 @@
 [data-component="im-chat-list"] {
   overflow-y: auto;
   padding: var(--space-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
 }
+
+/* Rows are virtualized: a full-height spacer drives the scrollbar and each row
+   is absolutely positioned within it, so the list itself is a plain block (a
+   flex column would shrink the spacer below its set height). Inter-row spacing
+   is the virtualizer's `gap`, not a flex `gap`. */
 
 [data-component="im-chat"] {
   display: flex;
