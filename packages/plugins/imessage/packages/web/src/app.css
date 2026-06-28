@@ -131,6 +131,13 @@
   color: var(--text-muted);
   font-size: var(--font-size-small);
   font-weight: 700;
+  overflow: hidden;
+}
+
+[data-component="im-avatar-img"] {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* Thread */

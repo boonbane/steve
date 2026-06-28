@@ -2,9 +2,15 @@ import { ptr, type Pointer } from "bun:ffi";
 import { IMsgNative } from "./ffi.ts";
 
 export namespace Contacts {
+  export type ContactInfo = {
+    name: string;
+    contactId: string | null;
+  };
+
   type Row = {
     input: string;
     name: string | null;
+    contactId: string | null;
     found: boolean;
   };
 
@@ -39,6 +45,9 @@ export namespace Contacts {
         name: IMsgNative.text(
           lib.symbols.imsg_contacts_result_name(result, idx),
         ),
+        contactId: IMsgNative.text(
+          lib.symbols.imsg_contacts_result_contact_id(result, idx),
+        ),
         found: lib.symbols.imsg_contacts_result_found(result, idx) === 1,
       });
     }
@@ -46,9 +55,9 @@ export namespace Contacts {
     return rows;
   }
 
-  export function resolveNames(handles: string[]): Map<string, string> {
+  export function resolve(handles: string[]): Map<string, ContactInfo> {
     if (handles.length === 0) {
-      return new Map<string, string>();
+      return new Map<string, ContactInfo>();
     }
 
     const lib = IMsgNative.load();
@@ -56,7 +65,7 @@ export namespace Contacts {
       console.warn(
         "warning: native library not available — contact names will not be resolved.",
       );
-      return new Map<string, string>();
+      return new Map<string, ContactInfo>();
     }
 
     const auth = lib.symbols.imsg_contacts_auth_status();
@@ -72,7 +81,7 @@ export namespace Contacts {
       console.warn(
         `warning: Contacts access ${reason} — names will not be resolved. Check System Settings → Privacy & Security → Contacts.`,
       );
-      return new Map<string, string>();
+      return new Map<string, ContactInfo>();
     }
 
     const input = marshal(handles);
@@ -85,31 +94,58 @@ export namespace Contacts {
     );
 
     if (code !== 0) {
-      return new Map<string, string>();
+      return new Map<string, ContactInfo>();
     }
 
     const raw = Number(out[0] ?? 0n);
     if (!raw) {
-      return new Map<string, string>();
+      return new Map<string, ContactInfo>();
     }
 
     const result = raw as Pointer;
 
     try {
       const rows = read(result);
-      const map = new Map<string, string>();
+      const map = new Map<string, ContactInfo>();
 
       for (const row of rows) {
         if (!row.found || !row.name) {
           continue;
         }
 
-        map.set(row.input, row.name);
+        map.set(row.input, { name: row.name, contactId: row.contactId });
       }
 
       return map;
     } finally {
       lib.symbols.imsg_contacts_result_free(result);
+    }
+  }
+
+  export function image(
+    identifier: string,
+    maxPixel = 128,
+  ): Uint8Array<ArrayBuffer> | null {
+    if (identifier.length === 0) {
+      return null;
+    }
+
+    const lib = IMsgNative.load();
+    if (!lib) {
+      return null;
+    }
+
+    const id = new TextEncoder().encode(`${identifier}\0`);
+    const outLen = new Uint32Array(1);
+    const data = lib.symbols.imsg_contact_image(ptr(id), maxPixel, ptr(outLen));
+    if (!data) {
+      return null;
+    }
+
+    try {
+      return IMsgNative.bytes(data, outLen[0] ?? 0);
+    } finally {
+      lib.symbols.imsg_contact_image_free(data);
     }
   }
 }

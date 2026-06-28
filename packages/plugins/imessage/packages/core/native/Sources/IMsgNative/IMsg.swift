@@ -1,5 +1,7 @@
 import Contacts
+import CoreGraphics
 import Foundation
+import ImageIO
 
 private enum IMsgAuth: s32 {
   case notDetermined = 0
@@ -512,4 +514,84 @@ public func imsg_contacts_result_free(_ resultRaw: UnsafeMutableRawPointer?) {
   }
 
   Unmanaged<IMsgResult>.fromOpaque(resultRaw).release()
+}
+
+private func imsgEncodeThumbnail(_ data: Data, _ maxPixel: Int) -> Data? {
+  guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+    return nil
+  }
+
+  let thumbOptions: [CFString: Any] = [
+    kCGImageSourceCreateThumbnailFromImageAlways: true,
+    kCGImageSourceCreateThumbnailWithTransform: true,
+    kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+  ]
+  guard
+    let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+      source, 0, thumbOptions as CFDictionary)
+  else {
+    return nil
+  }
+
+  let output = NSMutableData()
+  // The stable system UTI for JPEG (what kUTTypeJPEG resolves to); used as a
+  // literal so this doesn't require the macOS 11+ UniformTypeIdentifiers API.
+  guard
+    let destination = CGImageDestinationCreateWithData(
+      output as CFMutableData, "public.jpeg" as CFString, 1, nil)
+  else {
+    return nil
+  }
+
+  let destOptions: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.8]
+  CGImageDestinationAddImage(destination, thumbnail, destOptions as CFDictionary)
+  guard CGImageDestinationFinalize(destination) else {
+    return nil
+  }
+
+  return output as Data
+}
+
+@_cdecl("imsg_contact_image")
+public func imsg_contact_image(
+  _ identifierRaw: UnsafePointer<CChar>?,
+  _ maxPixel: u32,
+  _ outLen: UnsafeMutablePointer<u32>?
+) -> UnsafeMutableRawPointer? {
+  outLen?.pointee = 0
+
+  guard let identifierRaw else {
+    return nil
+  }
+
+  if imsgAuthStatus() != .authorized {
+    return nil
+  }
+
+  let identifier = String(cString: identifierRaw)
+  let store = CNContactStore()
+  let keys = [CNContactThumbnailImageDataKey as CNKeyDescriptor]
+
+  guard
+    let contact = try? store.unifiedContact(withIdentifier: identifier, keysToFetch: keys),
+    let data = contact.thumbnailImageData,
+    let encoded = imsgEncodeThumbnail(data, maxPixel == 0 ? 128 : Int(maxPixel)),
+    !encoded.isEmpty
+  else {
+    return nil
+  }
+
+  let count = encoded.count
+  guard let buffer = malloc(count) else {
+    return nil
+  }
+
+  encoded.copyBytes(to: buffer.assumingMemoryBound(to: UInt8.self), count: count)
+  outLen?.pointee = u32(count)
+  return buffer
+}
+
+@_cdecl("imsg_contact_image_free")
+public func imsg_contact_image_free(_ ptr: UnsafeMutableRawPointer?) {
+  free(ptr)
 }

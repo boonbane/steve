@@ -216,10 +216,22 @@ function serveAttachment(id: number): Response {
   return new Response(Bun.file(resolved), { headers: cache });
 }
 
-// GET /api/conversations — every chat collapsed across transports
-// (SMS/RCS/iMessage), newest first. Metadata only (no message bodies), so the
-// client can hold the whole list for instant search/filter; messages load on
-// demand. The merge is memoized in core, so this is cheap to call repeatedly.
+function serveAvatar(rawId: string): Response {
+  const conversation = client.conversation(decodeURIComponent(rawId));
+  if (!conversation || conversation.isGroup) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const image = Names.avatar(conversation.identifier);
+  if (!image) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  return new Response(image, {
+    headers: { "content-type": "image/jpeg", "cache-control": "max-age=86400" },
+  });
+}
+
 function listConversations(req: Request): Response {
   return json(enrichConversations(client.conversations()), 200, req);
 }
@@ -418,6 +430,9 @@ function main(): void {
         GET: (req) =>
           getMessages(req.params.id, new URL(req.url).searchParams, req),
         POST: (req) => postMessage(req.params.id, req),
+      },
+      "/api/conversations/:id/avatar": {
+        GET: (req) => serveAvatar(req.params.id),
       },
       "/api/events": {
         GET: (req) => events(req),

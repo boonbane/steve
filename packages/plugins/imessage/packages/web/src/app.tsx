@@ -162,6 +162,37 @@ function subtitle(conversation: Conversation): string {
   return conversation.service;
 }
 
+function Avatar(props: { conversation: Conversation }) {
+  const [failed, setFailed] = createSignal(false);
+
+  createEffect(
+    on(
+      () => props.conversation.id,
+      () => setFailed(false),
+      { defer: true },
+    ),
+  );
+
+  const showPhoto = () =>
+    !props.conversation.isGroup && props.conversation.resolved && !failed();
+
+  return (
+    <span data-component="im-avatar">
+      <Show when={showPhoto()} fallback={initials(label(props.conversation))}>
+        <img
+          data-component="im-avatar-img"
+          src={`/api/conversations/${encodeURIComponent(
+            props.conversation.id,
+          )}/avatar`}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      </Show>
+    </span>
+  );
+}
+
 export default function App() {
   const [
     conversations,
@@ -445,9 +476,7 @@ export default function App() {
                           }}
                           onClick={() => setActive(conversation()!)}
                         >
-                          <span data-component="im-avatar">
-                            {initials(label(conversation()!))}
-                          </span>
+                          <Avatar conversation={conversation()!} />
                           <span data-component="im-chat-meta">
                             <span data-component="im-chat-name">
                               {label(conversation()!)}
@@ -478,7 +507,7 @@ export default function App() {
           }
         >
           <header data-component="im-thread-head">
-            <span data-component="im-avatar">{initials(label(active()!))}</span>
+            <Avatar conversation={active()!} />
             <div>
               <h2>{label(active()!)}</h2>
               <p data-component="im-thread-sub">{subtitle(active()!)}</p>

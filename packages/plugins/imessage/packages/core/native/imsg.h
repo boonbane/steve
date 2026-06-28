@@ -39,6 +39,9 @@ uint8_t imsg_contacts_result_match_kind(const imsg_contacts_result_t* result, ui
 
 void imsg_contacts_result_free(imsg_contacts_result_t* result);
 
+void* imsg_contact_image(const char* identifier, uint32_t max_pixel, uint32_t* out_len);
+void imsg_contact_image_free(void* ptr);
+
 #ifdef __cplusplus
 }
 #endif

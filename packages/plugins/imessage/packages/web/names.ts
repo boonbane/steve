@@ -1,9 +1,7 @@
 import { Contacts } from "steve-plugin-imessage-core/ffi";
 
-// Resolves phone/email handles to contact names via the native Contacts FFI.
-// Results (hits and misses) are cached so each handle hits the FFI at most once.
 export namespace Names {
-  const cache = new Map<string, string | null>();
+  const cache = new Map<string, Contacts.ContactInfo | null>();
 
   // Reduce a raw handle to the canonical form the Contacts lookup expects:
   // strip URI schemes, lowercase emails, keep digits (with a leading +).
@@ -28,26 +26,45 @@ export namespace Names {
     return identifier.startsWith("chat");
   }
 
-  export function resolve(values: string[]): Map<string, string> {
+  export function resolve(values: string[]): Map<string, Contacts.ContactInfo> {
     const keys = [
       ...new Set(values.map(normalize).filter((value) => value.length > 0)),
     ];
     const missing = keys.filter((key) => !cache.has(key));
 
     if (missing.length > 0) {
-      const found = Contacts.resolveNames(missing);
+      const found = Contacts.resolve(missing);
       for (const key of missing) cache.set(key, found.get(key) ?? null);
     }
 
-    const out = new Map<string, string>();
+    const out = new Map<string, Contacts.ContactInfo>();
     for (const key of keys) {
-      const name = cache.get(key);
-      if (name) out.set(key, name);
+      const info = cache.get(key);
+      if (info) out.set(key, info);
     }
     return out;
   }
 
-  export function label(value: string, names: Map<string, string>): string | null {
-    return names.get(normalize(value)) ?? null;
+  export function label(
+    value: string,
+    names: Map<string, Contacts.ContactInfo>,
+  ): string | null {
+    return names.get(normalize(value))?.name ?? null;
+  }
+
+  export function avatarId(
+    value: string,
+    names: Map<string, Contacts.ContactInfo>,
+  ): string | null {
+    return names.get(normalize(value))?.contactId ?? null;
+  }
+
+  export function avatar(
+    handle: string,
+    maxPixel = 128,
+  ): Uint8Array<ArrayBuffer> | null {
+    const id = avatarId(handle, resolve([handle]));
+    if (!id) return null;
+    return Contacts.image(id, maxPixel);
   }
 }

@@ -1,4 +1,4 @@
-import { CString, FFIType, dlopen, type Pointer } from "bun:ffi";
+import { CString, FFIType, dlopen, toArrayBuffer, type Pointer } from "bun:ffi";
 import path from "path";
 
 export namespace IMsgNative {
@@ -60,6 +60,14 @@ export namespace IMsgNative {
       args: [FFIType.ptr],
       returns: FFIType.void,
     },
+    imsg_contact_image: {
+      args: [FFIType.ptr, FFIType.u32, FFIType.ptr],
+      returns: FFIType.ptr,
+    },
+    imsg_contact_image_free: {
+      args: [FFIType.ptr],
+      returns: FFIType.void,
+    },
   } as const;
 
   export type Lib = ReturnType<typeof dlopen<typeof symbols>>;
@@ -87,5 +95,16 @@ export namespace IMsgNative {
     }
 
     return new CString(value).toString();
+  }
+
+  export function bytes(
+    value: Pointer | null,
+    length: number,
+  ): Uint8Array<ArrayBuffer> | null {
+    if (!value || length <= 0) {
+      return null;
+    }
+
+    return new Uint8Array(toArrayBuffer(value, 0, length).slice(0));
   }
 }
