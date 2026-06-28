@@ -3,24 +3,6 @@ import { Contacts } from "steve-plugin-imessage-core/ffi";
 export namespace Names {
   const cache = new Map<string, Contacts.ContactInfo | null>();
 
-  // Reduce a raw handle to the canonical form the Contacts lookup expects:
-  // strip URI schemes, lowercase emails, keep digits (with a leading +).
-  export function normalize(value: string): string {
-    const raw = value.trim();
-    if (raw.length === 0) return "";
-
-    const lower = raw.toLowerCase();
-    if (lower.startsWith("mailto:")) return raw.slice(7).toLowerCase();
-    if (lower.startsWith("tel:")) return raw.slice(4);
-    if (lower.startsWith("sms:")) return raw.slice(4);
-    if (lower.startsWith("imessage:")) return raw.slice(9);
-    if (raw.includes("@")) return lower;
-
-    // Phone-like: keep digits and a single leading "+".
-    const out = raw.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
-    return out.length > 0 ? out : raw;
-  }
-
   // Group chats use a synthetic "chatNNN" identifier — never a contact.
   export function isGroupId(identifier: string): boolean {
     return identifier.startsWith("chat");
@@ -28,7 +10,9 @@ export namespace Names {
 
   export function resolve(values: string[]): Map<string, Contacts.ContactInfo> {
     const keys = [
-      ...new Set(values.map(normalize).filter((value) => value.length > 0)),
+      ...new Set(
+        values.map(Contacts.normalize).filter((value) => value.length > 0),
+      ),
     ];
     const missing = keys.filter((key) => !cache.has(key));
 
@@ -49,14 +33,14 @@ export namespace Names {
     value: string,
     names: Map<string, Contacts.ContactInfo>,
   ): string | null {
-    return names.get(normalize(value))?.name ?? null;
+    return names.get(Contacts.normalize(value))?.name ?? null;
   }
 
   export function avatarId(
     value: string,
     names: Map<string, Contacts.ContactInfo>,
   ): string | null {
-    return names.get(normalize(value))?.contactId ?? null;
+    return names.get(Contacts.normalize(value))?.contactId ?? null;
   }
 
   export function avatar(

@@ -9,54 +9,10 @@ private enum IMsgAuth: s32 {
   case authorized = 2
 }
 
-private enum IMsgKind: u8 {
-  case none = 0
-  case phone = 1
-  case email = 2
-  case im = 3
-}
-
-private final class IMsgRow {
-  let found: u8
-  let ambiguous: u8
-  let kind: u8
-  let input: UnsafeMutablePointer<CChar>?
-  let name: UnsafeMutablePointer<CChar>?
-  let contactID: UnsafeMutablePointer<CChar>?
-  let canonical: UnsafeMutablePointer<CChar>?
-
-  init(
-    found: Bool,
-    ambiguous: Bool,
-    kind: IMsgKind,
-    input: String,
-    name: String?,
-    contactID: String?,
-    canonical: String?
-  ) {
-    self.found = found ? 1 : 0
-    self.ambiguous = ambiguous ? 1 : 0
-    self.kind = kind.rawValue
-    self.input = strdup(input)
-    self.name = name == nil ? nil : strdup(name!)
-    self.contactID = contactID == nil ? nil : strdup(contactID!)
-    self.canonical = canonical == nil ? nil : strdup(canonical!)
-  }
-
-  deinit {
-    free(input)
-    free(name)
-    free(contactID)
-    free(canonical)
-  }
-}
-
-private final class IMsgResult {
-  let rows: [IMsgRow]
-
-  init(rows: [IMsgRow]) {
-    self.rows = rows
-  }
+private struct IMsgMatch: Encodable {
+  let input: String
+  let name: String
+  let contactId: String
 }
 
 private final class IMsgBox: @unchecked Sendable {
@@ -75,82 +31,6 @@ private func imsgAuthStatus() -> IMsgAuth {
   }
 
   return .denied
-}
-
-private func imsgResolveKind(_ value: String) -> IMsgKind {
-  let lower = value.lowercased()
-
-  if lower.hasPrefix("mailto:") {
-    return .email
-  }
-
-  if lower.contains("@") {
-    return .email
-  }
-
-  if lower.hasPrefix("tel:") || lower.hasPrefix("sms:") || lower.hasPrefix("imessage:") {
-    return .phone
-  }
-
-  let set = CharacterSet(charactersIn: "+0123456789 ()-.")
-  let stripped = value.trimmingCharacters(in: .whitespacesAndNewlines)
-
-  if stripped.isEmpty {
-    return .none
-  }
-
-  if stripped.rangeOfCharacter(from: set.inverted) == nil {
-    return .phone
-  }
-
-  return .im
-}
-
-private func imsgNormalize(_ raw: String, _ kind: IMsgKind) -> String {
-  let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-
-  if kind == .email {
-    if trimmed.lowercased().hasPrefix("mailto:") {
-      return String(trimmed.dropFirst(7)).lowercased()
-    }
-
-    return trimmed.lowercased()
-  }
-
-  if kind == .phone {
-    var value = trimmed
-    let lower = trimmed.lowercased()
-
-    if lower.hasPrefix("tel:") {
-      value = String(trimmed.dropFirst(4))
-    }
-
-    if lower.hasPrefix("sms:") {
-      value = String(trimmed.dropFirst(4))
-    }
-
-    if lower.hasPrefix("imessage:") {
-      value = String(trimmed.dropFirst(9))
-    }
-
-    var out = ""
-    out.reserveCapacity(value.count)
-
-    for ch in value {
-      if ch >= "0" && ch <= "9" {
-        out.append(ch)
-        continue
-      }
-
-      if ch == "+" && out.isEmpty {
-        out.append(ch)
-      }
-    }
-
-    return out
-  }
-
-  return trimmed
 }
 
 private func imsgPhoneDigits(_ raw: String) -> String {
@@ -181,11 +61,10 @@ private func imsgPhoneTail(_ digits: String) -> String {
 }
 
 private func imsgContactName(_ contact: CNContact) -> String {
-  let full = CNContactFormatter.string(from: contact, style: .fullName)
-  if full != nil {
-    if !full!.isEmpty {
-      return full!
-    }
+  if let full = CNContactFormatter.string(from: contact, style: .fullName),
+    !full.isEmpty
+  {
+    return full
   }
 
   if !contact.organizationName.isEmpty {
@@ -233,34 +112,22 @@ public func imsg_contacts_request_access() -> s32 {
 public func imsg_contacts_resolve(
   _ handlesRaw: UnsafePointer<UnsafePointer<CChar>?>?,
   _ count: u32,
-  _ flags: u32,
-  _ outRaw: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
-) -> s32 {
-  _ = flags
-
-  guard let outRaw else {
-    return -1
-  }
-
-  outRaw.pointee = nil
+  _ outLen: UnsafeMutablePointer<u32>?
+) -> UnsafeMutableRawPointer? {
+  outLen?.pointee = 0
 
   if imsgAuthStatus() != .authorized {
-    return -2
+    return nil
   }
 
-  if count > 0 {
-    guard handlesRaw != nil else {
-      return -1
-    }
+  if count > 0 && handlesRaw == nil {
+    return nil
   }
 
   let descriptor = CNContactFormatter.descriptorForRequiredKeys(for: .fullName)
   let keys: [CNKeyDescriptor] = [
     descriptor,
     CNContactIdentifierKey as CNKeyDescriptor,
-    CNContactGivenNameKey as CNKeyDescriptor,
-    CNContactFamilyNameKey as CNKeyDescriptor,
-    CNContactMiddleNameKey as CNKeyDescriptor,
     CNContactOrganizationNameKey as CNKeyDescriptor,
     CNContactNicknameKey as CNKeyDescriptor,
     CNContactPhoneNumbersKey as CNKeyDescriptor,
@@ -313,207 +180,56 @@ public func imsg_contacts_resolve(
     }
   }
 
-  var rows: [IMsgRow] = []
-  rows.reserveCapacity(Int(count))
+  var matches: [IMsgMatch] = []
+  matches.reserveCapacity(Int(count))
 
   for idx in 0..<Int(count) {
-    let item = handlesRaw!.advanced(by: idx).pointee
-    guard let item else {
-      return -1
+    guard let item = handlesRaw!.advanced(by: idx).pointee else {
+      return nil
     }
 
     let input = String(cString: item)
-    let kind = imsgResolveKind(input)
-    let canonical = imsgNormalize(input, kind)
-
-    if kind == .im {
-      rows.append(
-        IMsgRow(
-          found: false,
-          ambiguous: false,
-          kind: .im,
-          input: input,
-          name: nil,
-          contactID: nil,
-          canonical: canonical
-        )
-      )
-      continue
-    }
 
     var contacts: [CNContact] = []
-    if kind == .email {
-      contacts = byEmail[canonical.lowercased()] ?? []
-    } else if kind == .phone {
-      let digits = imsgPhoneDigits(canonical)
+    if input.contains("@") {
+      contacts = byEmail[input.lowercased()] ?? []
+    } else {
+      let digits = imsgPhoneDigits(input)
       if !digits.isEmpty {
         contacts = byPhoneFull[digits] ?? byPhoneTail[imsgPhoneTail(digits)] ?? []
       }
     }
 
-    if contacts.isEmpty {
-      rows.append(
-        IMsgRow(
-          found: false,
-          ambiguous: false,
-          kind: kind,
-          input: input,
-          name: nil,
-          contactID: nil,
-          canonical: canonical
-        )
-      )
+    guard let first = contacts.first else {
       continue
     }
 
-    let first = contacts[0]
-    rows.append(
-      IMsgRow(
-        found: true,
-        ambiguous: contacts.count > 1,
-        kind: kind,
+    matches.append(
+      IMsgMatch(
         input: input,
         name: imsgContactName(first),
-        contactID: first.identifier,
-        canonical: canonical
+        contactId: first.identifier
       )
     )
   }
 
-  let result = IMsgResult(rows: rows)
-  outRaw.pointee = UnsafeMutableRawPointer(Unmanaged.passRetained(result).toOpaque())
-  return 0
-}
-
-@_cdecl("imsg_contacts_result_count")
-public func imsg_contacts_result_count(_ resultRaw: UnsafeRawPointer?) -> u32 {
-  guard let resultRaw else {
-    return 0
-  }
-
-  let result = Unmanaged<IMsgResult>.fromOpaque(resultRaw).takeUnretainedValue()
-  return u32(result.rows.count)
-}
-
-@_cdecl("imsg_contacts_result_input")
-public func imsg_contacts_result_input(_ resultRaw: UnsafeRawPointer?, _ index: u32) -> UnsafePointer<CChar>? {
-  guard let resultRaw else {
+  guard let data = try? JSONEncoder().encode(matches), !data.isEmpty else {
     return nil
   }
 
-  let result = Unmanaged<IMsgResult>.fromOpaque(resultRaw).takeUnretainedValue()
-  let idx = Int(index)
-
-  if idx >= result.rows.count {
+  let length = data.count
+  guard let buffer = malloc(length) else {
     return nil
   }
 
-  return UnsafePointer(result.rows[idx].input)
+  data.copyBytes(to: buffer.assumingMemoryBound(to: UInt8.self), count: length)
+  outLen?.pointee = u32(length)
+  return buffer
 }
 
-@_cdecl("imsg_contacts_result_name")
-public func imsg_contacts_result_name(_ resultRaw: UnsafeRawPointer?, _ index: u32) -> UnsafePointer<CChar>? {
-  guard let resultRaw else {
-    return nil
-  }
-
-  let result = Unmanaged<IMsgResult>.fromOpaque(resultRaw).takeUnretainedValue()
-  let idx = Int(index)
-
-  if idx >= result.rows.count {
-    return nil
-  }
-
-  return UnsafePointer(result.rows[idx].name)
-}
-
-@_cdecl("imsg_contacts_result_contact_id")
-public func imsg_contacts_result_contact_id(_ resultRaw: UnsafeRawPointer?, _ index: u32) -> UnsafePointer<CChar>? {
-  guard let resultRaw else {
-    return nil
-  }
-
-  let result = Unmanaged<IMsgResult>.fromOpaque(resultRaw).takeUnretainedValue()
-  let idx = Int(index)
-
-  if idx >= result.rows.count {
-    return nil
-  }
-
-  return UnsafePointer(result.rows[idx].contactID)
-}
-
-@_cdecl("imsg_contacts_result_canonical")
-public func imsg_contacts_result_canonical(_ resultRaw: UnsafeRawPointer?, _ index: u32) -> UnsafePointer<CChar>? {
-  guard let resultRaw else {
-    return nil
-  }
-
-  let result = Unmanaged<IMsgResult>.fromOpaque(resultRaw).takeUnretainedValue()
-  let idx = Int(index)
-
-  if idx >= result.rows.count {
-    return nil
-  }
-
-  return UnsafePointer(result.rows[idx].canonical)
-}
-
-@_cdecl("imsg_contacts_result_found")
-public func imsg_contacts_result_found(_ resultRaw: UnsafeRawPointer?, _ index: u32) -> u8 {
-  guard let resultRaw else {
-    return 0
-  }
-
-  let result = Unmanaged<IMsgResult>.fromOpaque(resultRaw).takeUnretainedValue()
-  let idx = Int(index)
-
-  if idx >= result.rows.count {
-    return 0
-  }
-
-  return result.rows[idx].found
-}
-
-@_cdecl("imsg_contacts_result_ambiguous")
-public func imsg_contacts_result_ambiguous(_ resultRaw: UnsafeRawPointer?, _ index: u32) -> u8 {
-  guard let resultRaw else {
-    return 0
-  }
-
-  let result = Unmanaged<IMsgResult>.fromOpaque(resultRaw).takeUnretainedValue()
-  let idx = Int(index)
-
-  if idx >= result.rows.count {
-    return 0
-  }
-
-  return result.rows[idx].ambiguous
-}
-
-@_cdecl("imsg_contacts_result_match_kind")
-public func imsg_contacts_result_match_kind(_ resultRaw: UnsafeRawPointer?, _ index: u32) -> u8 {
-  guard let resultRaw else {
-    return 0
-  }
-
-  let result = Unmanaged<IMsgResult>.fromOpaque(resultRaw).takeUnretainedValue()
-  let idx = Int(index)
-
-  if idx >= result.rows.count {
-    return 0
-  }
-
-  return result.rows[idx].kind
-}
-
-@_cdecl("imsg_contacts_result_free")
-public func imsg_contacts_result_free(_ resultRaw: UnsafeMutableRawPointer?) {
-  guard let resultRaw else {
-    return
-  }
-
-  Unmanaged<IMsgResult>.fromOpaque(resultRaw).release()
+@_cdecl("imsg_contacts_resolve_free")
+public func imsg_contacts_resolve_free(_ ptr: UnsafeMutableRawPointer?) {
+  free(ptr)
 }
 
 private func imsgEncodeThumbnail(_ data: Data, _ maxPixel: Int) -> Data? {

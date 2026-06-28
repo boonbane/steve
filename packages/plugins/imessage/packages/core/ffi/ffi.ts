@@ -21,42 +21,10 @@ export namespace IMsgNative {
       returns: FFIType.i32,
     },
     imsg_contacts_resolve: {
-      args: [FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr],
-      returns: FFIType.i32,
-    },
-    imsg_contacts_result_count: {
-      args: [FFIType.ptr],
-      returns: FFIType.u32,
-    },
-    imsg_contacts_result_input: {
-      args: [FFIType.ptr, FFIType.u32],
+      args: [FFIType.ptr, FFIType.u32, FFIType.ptr],
       returns: FFIType.ptr,
     },
-    imsg_contacts_result_name: {
-      args: [FFIType.ptr, FFIType.u32],
-      returns: FFIType.ptr,
-    },
-    imsg_contacts_result_contact_id: {
-      args: [FFIType.ptr, FFIType.u32],
-      returns: FFIType.ptr,
-    },
-    imsg_contacts_result_canonical: {
-      args: [FFIType.ptr, FFIType.u32],
-      returns: FFIType.ptr,
-    },
-    imsg_contacts_result_found: {
-      args: [FFIType.ptr, FFIType.u32],
-      returns: FFIType.u8,
-    },
-    imsg_contacts_result_ambiguous: {
-      args: [FFIType.ptr, FFIType.u32],
-      returns: FFIType.u8,
-    },
-    imsg_contacts_result_match_kind: {
-      args: [FFIType.ptr, FFIType.u32],
-      returns: FFIType.u8,
-    },
-    imsg_contacts_result_free: {
+    imsg_contacts_resolve_free: {
       args: [FFIType.ptr],
       returns: FFIType.void,
     },

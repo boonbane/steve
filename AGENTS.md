@@ -31,6 +31,7 @@ Bun monorepo with an iOS app.
 
 # Rules
 
+- Never comment code, ever. When reviewing code, always flag newly added comments as to be removed.
 - Always use native Bun APIs where applicable
 - Always export and import a single, top-level namespace instead of loose symbols
 - Always use the `tmux` skill when you need to run e.g. a server and a client simultaneously; never try to time them with `sleep` or `timeout`

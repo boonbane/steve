@@ -1,4 +1,4 @@
-import { ptr, type Pointer } from "bun:ffi";
+import { CString, ptr } from "bun:ffi";
 import { IMsgNative } from "./ffi.ts";
 
 export namespace Contacts {
@@ -7,17 +7,36 @@ export namespace Contacts {
     contactId: string | null;
   };
 
-  type Row = {
+  type Match = {
     input: string;
-    name: string | null;
-    contactId: string | null;
-    found: boolean;
+    name: string;
+    contactId: string;
   };
 
+  export function normalize(value: string): string {
+    let raw = value.trim();
+    if (raw.length === 0) return "";
+
+    if (raw.includes(";")) {
+      raw = raw.split(";").pop()?.trim() ?? "";
+      if (raw.length === 0) return "";
+    }
+
+    const lower = raw.toLowerCase();
+    if (lower.startsWith("mailto:")) raw = raw.slice(7).trim();
+    else if (lower.startsWith("tel:")) raw = raw.slice(4).trim();
+    else if (lower.startsWith("sms:")) raw = raw.slice(4).trim();
+    else if (lower.startsWith("imessage:")) raw = raw.slice(9).trim();
+
+    if (raw.includes("@")) return raw.toLowerCase();
+
+    const digits = raw.replace(/[^\d+]/g, "").replace(/(?!^)\+/g, "");
+    return digits.length > 0 ? digits : raw;
+  }
+
   function marshal(handles: string[]) {
-    const texts = handles.map((value) =>
-      new TextEncoder().encode(`${value}\0`),
-    );
+    const encoder = new TextEncoder();
+    const texts = handles.map((value) => encoder.encode(`${value}\0`));
     const ptrs = new BigUint64Array(texts.length);
 
     for (const [idx, item] of texts.entries()) {
@@ -27,37 +46,29 @@ export namespace Contacts {
     return { texts, ptrs };
   }
 
-  function read(result: Pointer): Row[] {
-    const lib = IMsgNative.load();
-    if (!lib) {
-      return [];
+  function authorize(lib: IMsgNative.Lib): boolean {
+    const auth = lib.symbols.imsg_contacts_auth_status();
+    const status =
+      auth === 0 ? lib.symbols.imsg_contacts_request_access() : auth;
+    if (status === 2) {
+      return true;
     }
 
-    const count = lib.symbols.imsg_contacts_result_count(result);
-    const rows: Row[] = [];
-
-    for (const idx of Array.from({ length: count }, (_, value) => value)) {
-      rows.push({
-        input:
-          IMsgNative.text(
-            lib.symbols.imsg_contacts_result_input(result, idx),
-          ) ?? "",
-        name: IMsgNative.text(
-          lib.symbols.imsg_contacts_result_name(result, idx),
-        ),
-        contactId: IMsgNative.text(
-          lib.symbols.imsg_contacts_result_contact_id(result, idx),
-        ),
-        found: lib.symbols.imsg_contacts_result_found(result, idx) === 1,
-      });
-    }
-
-    return rows;
+    const reason = status === 1 ? "denied" : `unknown (status=${status})`;
+    console.warn(
+      `warning: Contacts access ${reason} — names will not be resolved. Check System Settings → Privacy & Security → Contacts.`,
+    );
+    return false;
   }
 
-  export function resolve(handles: string[]): Map<string, ContactInfo> {
+  export function resolve(values: string[]): Map<string, ContactInfo> {
+    const map = new Map<string, ContactInfo>();
+
+    const handles = [
+      ...new Set(values.map(normalize).filter((value) => value.length > 0)),
+    ];
     if (handles.length === 0) {
-      return new Map<string, ContactInfo>();
+      return map;
     }
 
     const lib = IMsgNative.load();
@@ -65,61 +76,49 @@ export namespace Contacts {
       console.warn(
         "warning: native library not available — contact names will not be resolved.",
       );
-      return new Map<string, ContactInfo>();
+      return map;
     }
 
-    const auth = lib.symbols.imsg_contacts_auth_status();
-    const status =
-      auth === 0 ? lib.symbols.imsg_contacts_request_access() : auth;
-    if (status !== 2) {
-      const reason =
-        status === 1
-          ? "denied"
-          : status === 3
-            ? "restricted"
-            : `unknown (status=${status})`;
-      console.warn(
-        `warning: Contacts access ${reason} — names will not be resolved. Check System Settings → Privacy & Security → Contacts.`,
-      );
-      return new Map<string, ContactInfo>();
+    if (!authorize(lib)) {
+      return map;
     }
 
     const input = marshal(handles);
-    const out = new BigUint64Array(1);
-    const code = lib.symbols.imsg_contacts_resolve(
+    const outLen = new Uint32Array(1);
+    const data = lib.symbols.imsg_contacts_resolve(
       ptr(input.ptrs),
       handles.length,
-      0,
-      ptr(out),
+      ptr(outLen),
     );
-
-    if (code !== 0) {
-      return new Map<string, ContactInfo>();
+    if (!data) {
+      return map;
     }
-
-    const raw = Number(out[0] ?? 0n);
-    if (!raw) {
-      return new Map<string, ContactInfo>();
-    }
-
-    const result = raw as Pointer;
 
     try {
-      const rows = read(result);
-      const map = new Map<string, ContactInfo>();
+      const length = outLen[0] ?? 0;
+      if (length === 0) {
+        return map;
+      }
 
-      for (const row of rows) {
-        if (!row.found || !row.name) {
+      const matches = JSON.parse(
+        new CString(data, 0, length).toString(),
+      ) as Match[];
+
+      for (const match of matches) {
+        if (!match.name) {
           continue;
         }
 
-        map.set(row.input, { name: row.name, contactId: row.contactId });
+        map.set(match.input, {
+          name: match.name,
+          contactId: match.contactId ?? null,
+        });
       }
-
-      return map;
     } finally {
-      lib.symbols.imsg_contacts_result_free(result);
+      lib.symbols.imsg_contacts_resolve_free(data);
     }
+
+    return map;
   }
 
   export function image(

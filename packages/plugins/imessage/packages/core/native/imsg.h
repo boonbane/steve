@@ -13,31 +13,12 @@ typedef enum {
   IMSG_CONTACTS_AUTH_AUTHORIZED = 2
 } imsg_contacts_auth_status_t;
 
-typedef enum {
-  IMSG_CONTACTS_MATCH_NONE = 0,
-  IMSG_CONTACTS_MATCH_PHONE = 1,
-  IMSG_CONTACTS_MATCH_EMAIL = 2,
-  IMSG_CONTACTS_MATCH_IM = 3
-} imsg_contacts_match_kind_t;
-
-typedef struct imsg_contacts_result imsg_contacts_result_t;
-
 int32_t imsg_contacts_auth_status(void);
 int32_t imsg_contacts_request_access(void);
 
-int32_t imsg_contacts_resolve(const char* const* handles, uint32_t count,
-                              uint32_t flags, imsg_contacts_result_t** out);
-
-uint32_t imsg_contacts_result_count(const imsg_contacts_result_t* result);
-const char* imsg_contacts_result_input(const imsg_contacts_result_t* result, uint32_t index);
-const char* imsg_contacts_result_name(const imsg_contacts_result_t* result, uint32_t index);
-const char* imsg_contacts_result_contact_id(const imsg_contacts_result_t* result, uint32_t index);
-const char* imsg_contacts_result_canonical(const imsg_contacts_result_t* result, uint32_t index);
-uint8_t imsg_contacts_result_found(const imsg_contacts_result_t* result, uint32_t index);
-uint8_t imsg_contacts_result_ambiguous(const imsg_contacts_result_t* result, uint32_t index);
-uint8_t imsg_contacts_result_match_kind(const imsg_contacts_result_t* result, uint32_t index);
-
-void imsg_contacts_result_free(imsg_contacts_result_t* result);
+void* imsg_contacts_resolve(const char* const* handles, uint32_t count,
+                            uint32_t* out_len);
+void imsg_contacts_resolve_free(void* ptr);
 
 void* imsg_contact_image(const char* identifier, uint32_t max_pixel, uint32_t* out_len);
 void imsg_contact_image_free(void* ptr);

@@ -1,23 +1,18 @@
 #!/usr/bin/env bun
 
-import { ptr, type Pointer } from "bun:ffi";
+import { CString, ptr } from "bun:ffi";
 import { IMsgNative } from "../ffi/ffi";
 
 namespace NativeSmoke {
-  type Row = {
-    input: string | null;
-    name: string | null;
-    contactID: string | null;
-    canonical: string | null;
-    found: boolean;
-    ambiguous: boolean;
-    kind: number;
+  type Match = {
+    input: string;
+    name: string;
+    contactId: string;
   };
 
   function marshal(handles: string[]) {
-    const store = handles.map((value) =>
-      new TextEncoder().encode(`${value}\0`),
-    );
+    const encoder = new TextEncoder();
+    const store = handles.map((value) => encoder.encode(`${value}\0`));
     const ptrs = new BigUint64Array(store.length);
 
     for (const [idx, item] of store.entries()) {
@@ -25,39 +20,6 @@ namespace NativeSmoke {
     }
 
     return { store, ptrs };
-  }
-
-  function read(result: Pointer): Row[] {
-    const lib = IMsgNative.load();
-    if (!lib) {
-      return [];
-    }
-
-    const count = lib.symbols.imsg_contacts_result_count(result);
-    const rows: Row[] = [];
-
-    for (const idx of Array.from({ length: count }, (_, i) => i)) {
-      rows.push({
-        input: IMsgNative.text(
-          lib.symbols.imsg_contacts_result_input(result, idx),
-        ),
-        name: IMsgNative.text(
-          lib.symbols.imsg_contacts_result_name(result, idx),
-        ),
-        contactID: IMsgNative.text(
-          lib.symbols.imsg_contacts_result_contact_id(result, idx),
-        ),
-        canonical: IMsgNative.text(
-          lib.symbols.imsg_contacts_result_canonical(result, idx),
-        ),
-        found: lib.symbols.imsg_contacts_result_found(result, idx) === 1,
-        ambiguous:
-          lib.symbols.imsg_contacts_result_ambiguous(result, idx) === 1,
-        kind: lib.symbols.imsg_contacts_result_match_kind(result, idx),
-      });
-    }
-
-    return rows;
   }
 
   export function main() {
@@ -77,7 +39,6 @@ namespace NativeSmoke {
     const auth = lib.symbols.imsg_contacts_auth_status();
     const status =
       request && auth === 0 ? lib.symbols.imsg_contacts_request_access() : auth;
-
     if (status !== 2) {
       process.stderr.write(`contacts not authorized (${status})\n`);
       if (!request && status === 0) {
@@ -89,28 +50,26 @@ namespace NativeSmoke {
     }
 
     const input = marshal(handles);
-    const out = new BigUint64Array(1);
-    const code = lib.symbols.imsg_contacts_resolve(
+    const outLen = new Uint32Array(1);
+    const data = lib.symbols.imsg_contacts_resolve(
       ptr(input.ptrs),
       handles.length,
-      0,
-      ptr(out),
+      ptr(outLen),
     );
-    if (code !== 0) {
-      process.stderr.write(`resolve failed (${code})\n`);
+    if (!data) {
+      process.stderr.write("resolve returned no data\n");
       process.exit(1);
     }
 
-    const raw = Number(out[0] ?? 0n);
-    if (!raw) {
-      process.stderr.write("resolve returned null result\n");
-      process.exit(1);
+    try {
+      const length = outLen[0] ?? 0;
+      const matches = JSON.parse(
+        new CString(data, 0, length).toString(),
+      ) as Match[];
+      process.stdout.write(`${JSON.stringify(matches, null, 2)}\n`);
+    } finally {
+      lib.symbols.imsg_contacts_resolve_free(data);
     }
-
-    const result = raw as Pointer;
-    const rows = read(result);
-    lib.symbols.imsg_contacts_result_free(result);
-    process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
   }
 }
 
