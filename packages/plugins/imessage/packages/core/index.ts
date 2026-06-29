@@ -17,6 +17,9 @@ const SEND_TIMEOUT_MS = 20_000;
 type Runner = (source: string, args: readonly string[]) => void;
 type Subscriber = (message: Message) => void;
 
+export type UnreadChange = { conversationId: string; unread: number };
+type UnreadSubscriber = (changes: UnreadChange[]) => void;
+
 type Asbridge = {
   exec: (source: string, args?: readonly string[]) => string;
 };
@@ -56,6 +59,35 @@ on run argv
 end run
 `;
 
+const MarkReadScript = `
+on run argv
+    set theHandle to item 1 of argv
+    set theScheme to item 2 of argv
+    tell application "Messages" to activate
+    delay 0.4
+    do shell script "open " & quoted form of (theScheme & ":" & theHandle)
+    delay 0.9
+    tell application "System Events"
+        tell process "Messages"
+            set didClick to false
+            repeat with e in (entire contents of window 1)
+                try
+                    if role of e is "AXRow" then
+                        if (value of attribute "AXSelected" of e) is true then
+                            click e
+                            set didClick to true
+                            exit repeat
+                        end if
+                    end if
+                end try
+            end repeat
+            if not didClick then error "no selected AXRow found in window 1"
+        end tell
+    end tell
+    return "clicked"
+end run
+`;
+
 export const Chat = z.object({
   id: z.number().int().nonnegative(),
   identifier: z.string(),
@@ -88,9 +120,6 @@ export const Attachment = z.object({
 
 export type Attachment = z.infer<typeof Attachment>;
 
-// A person/group collapsed across the separate chat rows Apple keeps per
-// transport (SMS, RCS, iMessage, …). `chatIds` are every underlying row;
-// `sendChatId` is the most recently active one ("last service used").
 export const Conversation = z.object({
   id: z.string(),
   chatIds: z.array(z.number().int().nonnegative()).min(1),
@@ -123,7 +152,10 @@ export interface IClient {
   conversations(limit?: number): Conversation[];
   conversation(id: string): Conversation | null;
   conversationByChat(chatId: number): Conversation | null;
+  unread(): Map<string, number>;
   send(chatId: number, text: string): void;
+  markRead(conversation: Conversation): Promise<boolean>;
+  subscribeUnread(fn: (changes: UnreadChange[]) => void): () => void;
   sent(chatIds: number[], afterRowId: number, text: string): Message | null;
   history(
     chatId: number,
@@ -424,14 +456,23 @@ class SQLiteClient implements IClient {
   private readonly hasAttributedBody: boolean;
   private readonly hasAssociatedMessageType: boolean;
   private readonly hasDestinationCallerID: boolean;
+  private readonly hasIsRead: boolean;
   private readonly hasGroupId: boolean;
   private readonly hasStyle: boolean;
   private readonly watchedFiles: Set<string>;
   private readonly watchedPaths: string[];
   private readonly subscribers = new Set<Subscriber>();
+  private readonly unreadSubscribers = new Set<UnreadSubscriber>();
   private watcher: fs.FSWatcher | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private cursor = 0;
+  // Mark-read drives the single Messages UI, so calls must run one at a time;
+  // chain them so rapid conversation-opens don't fight over the foreground.
+  private markReadChain: Promise<unknown> = Promise.resolve();
+  // Snapshot of the last emitted unread-by-conversation counts, diffed on each
+  // poll so we report only what changed. Reads are in-place UPDATEs (no new
+  // ROWID), so the message cursor can't see them — this diff is how we do.
+  private lastUnread = new Map<string, number>();
   // The conversation merge is pure over the message set, so it only changes when
   // a new message lands. Memoize it against the latest ROWID and rebuild lazily.
   private convCache: {
@@ -452,6 +493,7 @@ class SQLiteClient implements IClient {
     this.hasAttributedBody = columns.has("attributedbody");
     this.hasAssociatedMessageType = columns.has("associated_message_type");
     this.hasDestinationCallerID = columns.has("destination_caller_id");
+    this.hasIsRead = columns.has("is_read");
     const chatCols = this.chatColumns();
     this.hasGroupId = chatCols.has("group_id");
     this.hasStyle = chatCols.has("style");
@@ -510,6 +552,49 @@ class SQLiteClient implements IClient {
     const index = this.conversationIndex();
     const id = index.byChat.get(toNumber(chatId));
     return id == null ? null : (index.byId.get(id) ?? null);
+  }
+
+  // Unread message count per conversation, keyed by conversation id. A message
+  // is unread when it was received (`is_from_me = 0`) and never read
+  // (`is_read = 0`) — the same signal Messages.app shows. Kept out of the merged
+  // Conversation (and its ROWID-keyed cache) on purpose: read-state flips when a
+  // message is read on the Mac without a new row landing, so this is recomputed
+  // on every call (one cheap grouped scan) to always reflect current state.
+  // Reaction/tapback rows are excluded so a like never reads as an unread reply.
+  unread(): Map<string, number> {
+    const counts = new Map<string, number>();
+    if (!this.hasIsRead) {
+      return counts;
+    }
+
+    const reactionFilter = this.hasAssociatedMessageType
+      ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
+      : "";
+    const rows = this.db
+      .query(
+        `
+          SELECT cmj.chat_id AS chatId, COUNT(*) AS unread
+          FROM message m
+          JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+          WHERE m.is_from_me = 0 AND m.is_read = 0${reactionFilter}
+          GROUP BY cmj.chat_id
+        `,
+      )
+      .all() as Array<{ chatId: bigint | number; unread: bigint | number }>;
+
+    const { byChat } = this.conversationIndex();
+    for (const row of rows) {
+      const conversationId = byChat.get(toNumber(row.chatId));
+      if (conversationId == null) {
+        continue;
+      }
+      counts.set(
+        conversationId,
+        (counts.get(conversationId) ?? 0) + toNumber(row.unread),
+      );
+    }
+
+    return counts;
   }
 
   // Memoized conversation merge. Recomputes only when the newest ROWID moves,
@@ -1039,6 +1124,45 @@ class SQLiteClient implements IClient {
     this.execAppleScript(SendScript, [handle, content, service, "", "0"]);
   }
 
+  // Drive Messages to mark a conversation read for real (clears it on this Mac,
+  // sends a read receipt where applicable, and syncs to other devices) — the
+  // database is read-only, so this is the only way to persist a read. Serialized
+  // and run async so it doesn't block the event loop or fight the foreground.
+  // Resolves true if it drove Messages, false if it was a no-op (a group, no
+  // handle, or already read). Best-effort: failures reject for the caller to log.
+  markRead(conversation: Conversation): Promise<boolean> {
+    const task = () => this.runMarkRead(conversation);
+    const result = this.markReadChain.then(task, task);
+    this.markReadChain = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async runMarkRead(conversation: Conversation): Promise<boolean> {
+    // Only 1:1 threads can be addressed by handle via the URL scheme; a group
+    // has no such address, so we can't drive Messages to select it.
+    if (conversation.isGroup) {
+      return false;
+    }
+    const handle = conversation.identifier.trim();
+    if (handle.length === 0) {
+      return false;
+    }
+    // Skip if it's already read — a stale queued open, or read elsewhere since —
+    // so we don't yank Messages to the foreground for nothing.
+    if ((this.unread().get(conversation.id) ?? 0) === 0) {
+      return false;
+    }
+
+    await this.execAppleScriptAsync(MarkReadScript, [
+      handle,
+      mapService(conversation.service),
+    ]);
+    return true;
+  }
+
   // Picks the chat guid to send to for the resolved service. A person often has
   // separate SMS/RCS/iMessage chat rows for the same handle, so we choose the
   // thread whose transport matches `service` rather than whichever row the
@@ -1120,25 +1244,60 @@ class SQLiteClient implements IClient {
   }
 
   subscribe(fn: Subscriber): () => void {
+    const wasIdle = this.subscriberCount() === 0;
     this.subscribers.add(fn);
 
+    // The message cursor is meaningful only to message subscribers: pin it to
+    // "now" when the first one joins so it tails new messages, regardless of any
+    // unread subscriber that may have started the watcher already.
     if (this.subscribers.size === 1) {
       this.cursor = this.maxRowID();
+    }
+    if (wasIdle) {
       this.startWatcher();
     }
 
     return () => {
       this.subscribers.delete(fn);
 
-      if (this.subscribers.size === 0) {
+      if (this.subscriberCount() === 0) {
         this.stopWatcher();
       }
     };
   }
 
+  // Subscribe to unread-count changes per conversation. Shares the file watcher
+  // with subscribe(); the diff is computed on the same poll. The first unread
+  // subscriber seeds the snapshot from the current state so the initial diff
+  // reports genuine changes, not the whole existing backlog of unread chats.
+  subscribeUnread(fn: UnreadSubscriber): () => void {
+    const wasIdle = this.subscriberCount() === 0;
+    this.unreadSubscribers.add(fn);
+
+    if (this.unreadSubscribers.size === 1) {
+      this.lastUnread = this.unread();
+    }
+    if (wasIdle) {
+      this.startWatcher();
+    }
+
+    return () => {
+      this.unreadSubscribers.delete(fn);
+
+      if (this.subscriberCount() === 0) {
+        this.stopWatcher();
+      }
+    };
+  }
+
+  private subscriberCount(): number {
+    return this.subscribers.size + this.unreadSubscribers.size;
+  }
+
   close() {
     this.stopWatcher();
     this.subscribers.clear();
+    this.unreadSubscribers.clear();
     this.db.close();
   }
 
@@ -1282,35 +1441,71 @@ class SQLiteClient implements IClient {
   }
 
   private poll(): void {
-    if (this.subscribers.size === 0) {
+    if (this.subscriberCount() === 0) {
       return;
     }
 
-    const batch = this.options.batchLimit;
-    let shouldContinue = true;
+    if (this.subscribers.size > 0) {
+      const batch = this.options.batchLimit;
+      let shouldContinue = true;
 
-    while (shouldContinue) {
-      const messages = this.selectAfter(this.cursor, batch);
+      while (shouldContinue) {
+        const messages = this.selectAfter(this.cursor, batch);
 
-      if (messages.length === 0) {
-        return;
-      }
-
-      for (const message of messages) {
-        if (message.id > this.cursor) {
-          this.cursor = message.id;
+        if (messages.length === 0) {
+          break;
         }
 
-        for (const subscriber of this.subscribers) {
-          try {
-            subscriber(message);
-          } catch {
-            continue;
+        for (const message of messages) {
+          if (message.id > this.cursor) {
+            this.cursor = message.id;
+          }
+
+          for (const subscriber of this.subscribers) {
+            try {
+              subscriber(message);
+            } catch {
+              continue;
+            }
           }
         }
-      }
 
-      shouldContinue = messages.length >= batch;
+        shouldContinue = messages.length >= batch;
+      }
+    }
+
+    if (this.unreadSubscribers.size > 0) {
+      this.emitUnreadChanges();
+    }
+  }
+
+  private emitUnreadChanges(): void {
+    const current = this.unread();
+    const changes: UnreadChange[] = [];
+
+    for (const [conversationId, count] of current) {
+      if (this.lastUnread.get(conversationId) !== count) {
+        changes.push({ conversationId, unread: count });
+      }
+    }
+    for (const conversationId of this.lastUnread.keys()) {
+      if (!current.has(conversationId)) {
+        changes.push({ conversationId, unread: 0 });
+      }
+    }
+
+    this.lastUnread = current;
+
+    if (changes.length === 0) {
+      return;
+    }
+
+    for (const subscriber of this.unreadSubscribers) {
+      try {
+        subscriber(changes);
+      } catch {
+        continue;
+      }
     }
   }
 
@@ -1341,9 +1536,6 @@ class SQLiteClient implements IClient {
       },
     );
 
-    // A timeout (osascript killed) surfaces as an ETIMEDOUT error and/or a
-    // termination signal. Turn it into a clear message instead of leaving the
-    // caller hanging — Messages scripting can stall indefinitely otherwise.
     const errorCode = (result.error as (Error & { code?: string }) | undefined)
       ?.code;
     if (errorCode === "ETIMEDOUT" || result.signal != null) {
@@ -1368,6 +1560,34 @@ class SQLiteClient implements IClient {
     throw new Error(
       detail.length > 0 ? detail : "AppleScript execution failed",
     );
+  }
+
+  private async execAppleScriptAsync(
+    source: string,
+    args: readonly string[],
+  ): Promise<void> {
+    if (this.options.scriptRunner) {
+      this.options.scriptRunner(source, args);
+      return;
+    }
+
+    const proc = Bun.spawn(
+      ["/usr/bin/osascript", "-l", "AppleScript", "-", ...args],
+      { stdin: Buffer.from(source), stdout: "ignore", stderr: "pipe" },
+    );
+
+    const killer = setTimeout(() => proc.kill(9), SEND_TIMEOUT_MS);
+    let status: number;
+    try {
+      status = await proc.exited;
+    } finally {
+      clearTimeout(killer);
+    }
+
+    if (status !== 0) {
+      const detail = (await new Response(proc.stderr).text()).trim();
+      throw new Error(detail || "AppleScript execution failed");
+    }
   }
 }
 

@@ -58,6 +58,8 @@ type ConversationDTO = {
   memberNames: string[];
   service: string;
   lastMessageAt: Date;
+  // Count of received-but-unread messages, so the client can badge the row.
+  unread: number;
 };
 
 // The wire shape of a message. Carries the stable `conversationId` (not the
@@ -109,6 +111,7 @@ function enrichConversations(conversations: Conversation[]): ConversationDTO[] {
     conversation.isGroup ? conversation.participants : [conversation.identifier],
   );
   const names = Names.resolve(handles);
+  const unread = client.unread();
 
   return conversations.map((conversation) => {
     const memberNames = conversation.isGroup
@@ -142,6 +145,7 @@ function enrichConversations(conversations: Conversation[]): ConversationDTO[] {
       memberNames,
       service: conversation.service,
       lastMessageAt: conversation.lastMessageAt,
+      unread: unread.get(conversation.id) ?? 0,
     };
   });
 }
@@ -311,6 +315,25 @@ async function postMessage(rawId: string, req: Request): Promise<Response> {
   });
 }
 
+// POST /api/conversations/:id/read
+// Mark the conversation read by driving Messages on the host (the DB is
+// read-only, so this is the only way to persist a read). Fire-and-forget: the
+// client doesn't wait — once Messages writes is_read back to chat.db, the
+// unread-diff watcher broadcasts the cleared count over /api/events on its own.
+function postRead(rawId: string): Response {
+  const conversation = client.conversation(decodeURIComponent(rawId));
+  if (!conversation) {
+    return json({ error: "conversation not found" }, 404);
+  }
+
+  client.markRead(conversation).catch((err) => {
+    const message = err instanceof Error ? err.message : "mark read failed";
+    consola.error(`markRead ${conversation.id} failed:`, message);
+  });
+
+  return json({ status: "accepted" }, 202);
+}
+
 // GET /api/events — live stream of messages as Server-Sent Events. Each event
 // carries an `id:` (the message ROWID); on reconnect the browser sends it back
 // as `Last-Event-ID` and we replay the gap before resuming the live tail, so a
@@ -324,6 +347,7 @@ function events(req: Request): Response {
   const hasCursor = Number.isFinite(resumeFrom) && resumeFrom > 0;
 
   let unsubscribe: (() => void) | null = null;
+  let unsubscribeUnread: (() => void) | null = null;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   let closed = false;
 
@@ -334,6 +358,7 @@ function events(req: Request): Response {
         closed = true;
         if (heartbeat) clearInterval(heartbeat);
         unsubscribe?.();
+        unsubscribeUnread?.();
         try {
           controller.close();
         } catch {
@@ -383,6 +408,16 @@ function events(req: Request): Response {
       // delivered until replay finishes; the `high` watermark dedups the seam.
       unsubscribe = client.subscribe(flush);
 
+      // Forward unread-count changes (new messages raise a count; a read synced
+      // from another device lowers it, possibly to zero). These carry no `id:`
+      // and aren't part of the message resume cursor — the client's initial
+      // conversation fetch is the cold-start baseline; these keep it live.
+      unsubscribeUnread = client.subscribeUnread((changes) => {
+        for (const change of changes) {
+          sendEvent("conversation.unread", JSON.stringify(change));
+        }
+      });
+
       if (hasCursor) {
         let from = resumeFrom;
         while (true) {
@@ -401,6 +436,7 @@ function events(req: Request): Response {
       closed = true;
       if (heartbeat) clearInterval(heartbeat);
       unsubscribe?.();
+      unsubscribeUnread?.();
     },
   });
 
@@ -430,6 +466,9 @@ function main(): void {
         GET: (req) =>
           getMessages(req.params.id, new URL(req.url).searchParams, req),
         POST: (req) => postMessage(req.params.id, req),
+      },
+      "/api/conversations/:id/read": {
+        POST: (req) => postRead(req.params.id),
       },
       "/api/conversations/:id/avatar": {
         GET: (req) => serveAvatar(req.params.id),

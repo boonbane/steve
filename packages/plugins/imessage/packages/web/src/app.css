@@ -120,6 +120,31 @@
   color: var(--text-muted);
 }
 
+[data-component="im-chat"][data-unread="true"] [data-component="im-chat-name"] {
+  color: var(--text-strong);
+}
+
+[data-component="im-unread"] {
+  flex: none;
+  margin-left: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--button-primary-base);
+  color: var(--button-primary-text);
+  font-size: var(--font-size-small);
+  font-weight: 700;
+  line-height: 1;
+}
+
+[data-component="im-chat"][data-active="true"] [data-component="im-unread"] {
+  background: var(--button-primary-text);
+  color: var(--button-primary-base);
+}
+
 [data-component="im-avatar"] {
   flex: none;
   display: grid;

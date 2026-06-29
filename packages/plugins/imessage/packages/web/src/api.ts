@@ -13,6 +13,10 @@ export type Conversation = {
   memberNames: string[];
   service: string;
   lastMessageAt: string;
+  // Received-but-unread message count. The UI badges any row with unread > 0;
+  // it's cleared client-side on open (the DB is read-only, so we can't mark it
+  // read upstream) and incremented live as messages arrive for other rows.
+  unread: number;
 };
 
 export type Attachment = {
@@ -47,8 +51,6 @@ export async function fetchConversations(): Promise<Conversation[]> {
 
 export const PAGE_SIZE = 50;
 
-// Returns up to PAGE_SIZE messages (chronological, oldest first) for a
-// conversation. Pass `before` (a message id) to fetch the previous page.
 export async function fetchMessages(
   conversationId: string,
   before?: number,
@@ -60,10 +62,14 @@ export async function fetchMessages(
   return res.json();
 }
 
-// Sends via Messages.app on the host and resolves to the created message once
-// it lands in the database, so the caller can swap its optimistic bubble for
-// the real one by id. Resolves to `null` if the send was accepted but hasn't
-// been recorded yet — it will arrive over the event stream.
+export async function markConversationRead(conversationId: string): Promise<void> {
+  try {
+    await fetch(`${conversationPath(conversationId)}/read`, { method: "POST" });
+  } catch {
+    // Ignore — the badge is already cleared locally; nothing to recover.
+  }
+}
+
 export async function sendMessage(
   conversationId: string,
   text: string,

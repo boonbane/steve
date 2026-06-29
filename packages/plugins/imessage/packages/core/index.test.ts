@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import fs from "fs";
 import path from "path";
-import { Client, type Message } from "./index.ts";
+import { Client, type Message, type UnreadChange } from "./index.ts";
 
 const APPLE_EPOCH_MS = 978_307_200_000;
 
@@ -63,7 +63,9 @@ async function fixture() {
         text TEXT,
         destination_caller_id TEXT,
         date INTEGER,
+        date_read INTEGER DEFAULT 0,
         is_from_me INTEGER,
+        is_read INTEGER DEFAULT 0,
         is_sent INTEGER DEFAULT 0,
         error INTEGER DEFAULT 0,
         service TEXT,
@@ -396,6 +398,103 @@ describe("Client", () => {
     }
   });
 
+  it("markRead() drives Messages for an unread 1:1, skips groups and read chats", async () => {
+    const { dbPath } = await fixture();
+    const seed = new Database(dbPath);
+    seed.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, is_read, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [1, null, "hi", toAppleNs(Date.now()), 0, 0, "iMessage"],
+    );
+    seed.run("INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 1)");
+    seed.close();
+
+    const calls: Array<readonly string[]> = [];
+    const client = Client({
+      dbPath,
+      scriptRunner: (_source, args) => calls.push(args),
+    });
+
+    try {
+      const conversation = client.conversation("d:+15551234567");
+      expect(conversation).toBeTruthy();
+
+      // 1:1 with an unread message → drives Messages with [handle, scheme].
+      expect(await client.markRead(conversation!)).toBe(true);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.[0]).toBe("+15551234567");
+      expect(calls[0]?.[1]).toBe("imessage");
+
+      // A group can't be addressed by handle → no-op, no extra script run.
+      expect(await client.markRead({ ...conversation!, isGroup: true })).toBe(
+        false,
+      );
+      expect(calls).toHaveLength(1);
+
+      // Once it's actually read, a repeat open is a no-op (nothing to clear).
+      const writer = new Database(dbPath);
+      writer.run("UPDATE message SET is_read = 1 WHERE ROWID = 1");
+      writer.close();
+      expect(await client.markRead(conversation!)).toBe(false);
+      expect(calls).toHaveLength(1);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("subscribeUnread() emits when a message is marked read in place", async () => {
+    const { dbPath } = await fixture();
+
+    // An unread received message in the fixture's 1:1 chat (+15551234567).
+    const seed = new Database(dbPath);
+    seed.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, is_read, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [1, null, "unread", toAppleNs(Date.now()), 0, 0, "iMessage"],
+    );
+    seed.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (?1, ?2)",
+      [1, 1],
+    );
+    seed.close();
+
+    const client = Client({ dbPath, debounceMs: 10, batchLimit: 10 });
+    let unsubscribe: (() => void) | undefined;
+
+    try {
+      // Baseline: the conversation starts with one unread message.
+      expect(client.unread().get("d:+15551234567")).toBe(1);
+
+      const change = new Promise<UnreadChange>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error("unread timeout"));
+        }, 3000);
+
+        unsubscribe = client.subscribeUnread((changes) => {
+          clearTimeout(timeout);
+          resolve(changes[0]!);
+        });
+      });
+
+      await Bun.sleep(25);
+
+      // Read it elsewhere: a synced read lands as an in-place UPDATE (no new
+      // ROWID), which the message tail can't see but the unread diff catches.
+      const writer = new Database(dbPath);
+      writer.run(
+        "UPDATE message SET is_read = 1, date_read = ?1 WHERE ROWID = 1",
+        [toAppleNs(Date.now())],
+      );
+      writer.close();
+
+      const result = await change;
+
+      expect(result.conversationId).toBe("d:+15551234567");
+      expect(result.unread).toBe(0);
+    } finally {
+      unsubscribe?.();
+      client.close();
+    }
+  });
+
   it("conversations() collapses a person's transports under one stable id", async () => {
     const { dbPath } = await fixture();
     const db = new Database(dbPath);
@@ -441,6 +540,50 @@ describe("Client", () => {
       "+15551234567",
     );
     client.close();
+  });
+
+  it("unread() counts received-unread messages per conversation, across transports", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    // Same setup as the transport-collapse test: two chat rows for one handle,
+    // so unread must sum across both into the single merged conversation.
+    db.run(
+      "INSERT INTO chat(ROWID, chat_identifier, guid, display_name, service_name, style, group_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [2, "+15551234567", "SMS;-;+15551234567", "", "SMS", null, null],
+    );
+    db.run("INSERT INTO handle(ROWID, id) VALUES (?1, ?2)", [
+      1,
+      "+15551234567",
+    ]);
+    db.run(
+      "INSERT INTO chat_handle_join(chat_id, handle_id) VALUES (1, 1), (2, 1)",
+    );
+
+    const insert = db.query(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, is_read, service, associated_message_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    );
+    // received + unread on the iMessage row → counts
+    insert.run(1, 1, "unread a", toAppleNs(Date.now() - 5000), 0, 0, "iMessage", null);
+    // received but already read → ignored
+    insert.run(2, 1, "read", toAppleNs(Date.now() - 4000), 0, 1, "iMessage", null);
+    // received + unread on the SMS row → counts (same conversation)
+    insert.run(3, 1, "unread b", toAppleNs(Date.now() - 3000), 0, 0, "SMS", null);
+    // outgoing, unread flag irrelevant → ignored
+    insert.run(4, 1, "mine", toAppleNs(Date.now() - 2000), 1, 0, "iMessage", null);
+    // a tapback (reaction) that is received+unread → ignored, not a real reply
+    insert.run(5, 1, "liked", toAppleNs(Date.now() - 1000), 0, 0, "iMessage", 2001);
+
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 1), (1, 2), (2, 3), (1, 4), (1, 5)",
+    );
+    db.close();
+
+    const client = Client({ dbPath });
+    const unread = client.unread();
+    client.close();
+
+    expect(unread.get("d:+15551234567")).toBe(2);
   });
 
   it("conversations() keys groups on group_id, stable across membership changes", async () => {

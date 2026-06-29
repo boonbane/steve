@@ -18,6 +18,7 @@ import { Button } from "@steve/ui/button";
 import {
   fetchConversations,
   fetchMessages,
+  markConversationRead,
   sendMessage,
   PAGE_SIZE,
   type Attachment,
@@ -38,19 +39,14 @@ function label(conversation: Conversation): string {
   return conversation.name.trim() || conversation.identifier || "Unknown";
 }
 
-// Short codes (e.g. "692639" from CVS) are 1:1 chats whose identifier is a bare
-// 3–6 digit number — real numbers carry a "+"/country code or formatting.
 function isShortcode(conversation: Conversation): boolean {
   return !conversation.isGroup && /^\d{3,6}$/.test(conversation.identifier.trim());
 }
 
-// A 1:1 reached by email (an Apple ID) — almost always a real person, so the
-// "hide unknown numbers" filter leaves it alone even when it isn't a contact.
 function isEmailHandle(conversation: Conversation): boolean {
   return !conversation.isGroup && conversation.identifier.includes("@");
 }
 
-// Everything a search query can match against for a conversation.
 function searchHaystack(conversation: Conversation): string {
   return [
     conversation.name,
@@ -62,9 +58,6 @@ function searchHaystack(conversation: Conversation): string {
     .toLowerCase();
 }
 
-// Subsequence fuzzy match. Returns a score (higher is better) or -1 if `query`
-// is not a subsequence of `text`. Rewards consecutive hits and word-start hits
-// so "ns" ranks "Nathan Slaughter" above an incidental "...n...s...".
 function fuzzyScore(query: string, text: string): number {
   let qi = 0;
   let score = 0;
@@ -83,8 +76,6 @@ function fuzzyScore(query: string, text: string): number {
   return qi === query.length ? score : -1;
 }
 
-// Attachment-bearing messages store a U+FFFC object-replacement char as their
-// text; strip it so attachment-only messages don't render a stray glyph.
 function bodyText(msg: Message): string {
   return msg.text.replace(/￼/g, "").trim();
 }
@@ -93,8 +84,6 @@ function senderLabel(msg: Message): string {
   return msg.senderName ?? msg.sender;
 }
 
-// Float a conversation to the top of the list and refresh its recency when a
-// new message arrives — a local patch, so we never refetch the whole list.
 function bumpConversation(
   list: Conversation[],
   msg: Message,
@@ -153,7 +142,6 @@ function time(iso: string, withYear = false): string {
   });
 }
 
-// Subtitle under the conversation name: group → member count, 1:1 → service.
 function subtitle(conversation: Conversation): string {
   if (conversation.isGroup) {
     const n = conversation.participants.length;
@@ -200,13 +188,31 @@ export default function App() {
   ] = createResource(fetchConversations);
   const [active, setActive] = createSignal<Conversation | null>(null);
 
-  // Sidebar search + filtering, applied client-side over the full list.
+  const [unreadOverride, setUnreadOverride] = createSignal<
+    Record<string, number>
+  >({});
+  const unreadCount = (conversation: Conversation): number => {
+    const overrides = unreadOverride();
+    return conversation.id in overrides
+      ? overrides[conversation.id]
+      : conversation.unread;
+  };
+
+  const open = (conversation: Conversation) => {
+    setActive(conversation);
+    const hadUnread = unreadCount(conversation) > 0;
+    setUnreadOverride((prev) =>
+      prev[conversation.id] === 0 ? prev : { ...prev, [conversation.id]: 0 },
+    );
+    if (hadUnread && !conversation.isGroup) {
+      void markConversationRead(conversation.id);
+    }
+  };
+
   const [query, setQuery] = createSignal("");
   const [hideShortcodes, setHideShortcodes] = createSignal(false);
   const [hideUnknown, setHideUnknown] = createSignal(false);
 
-  // Read the resource without throwing on pending/errored states, so a failed
-  // load surfaces a message instead of blanking the list.
   const ready = () =>
     conversations.state === "ready" || conversations.state === "refreshing";
   const list = createMemo<Conversation[]>(() =>
@@ -235,12 +241,6 @@ export default function App() {
       .map((match) => match.conversation);
   });
 
-  // The sidebar holds the entire conversation list in memory (so search/filter
-  // stay instant), but only the rows in view are mounted. `visible()` can be
-  // hundreds of entries; without windowing every one becomes a DOM node and a
-  // reconcile target on each keystroke. `count` is a getter so the virtualizer
-  // re-measures whenever the filtered list changes; row height is measured from
-  // the DOM (`measureElement`) so we don't hard-code the avatar/padding math.
   let listScroller!: HTMLDivElement;
   const rowVirtualizer = createVirtualizer({
     get count() {
@@ -256,8 +256,6 @@ export default function App() {
   const [loading, setLoading] = createSignal(false);
   const [hasMore, setHasMore] = createSignal(false);
 
-  // Composer state. `pending` holds optimistic bubbles for messages we've
-  // handed to Messages.app but haven't yet read back from the database.
   const [draft, setDraft] = createSignal("");
   const [sending, setSending] = createSignal(false);
   const [pending, setPending] = createSignal<{ tempId: string; text: string }[]>(
@@ -272,7 +270,6 @@ export default function App() {
       scroller.scrollTop = scroller.scrollHeight;
     });
 
-  // Load the most recent page whenever the active conversation changes.
   createEffect(
     on(active, async (conversation) => {
       setMessages([]);
@@ -283,6 +280,7 @@ export default function App() {
 
       setLoading(true);
       const page = await fetchMessages(conversation.id);
+
       // Ignore if the user switched conversations while we were fetching.
       if (active()?.id !== conversation.id) return;
       setMessages(page);
@@ -292,18 +290,12 @@ export default function App() {
     }),
   );
 
-  // Live updates: subscribe to the server's SSE stream and apply each newly
-  // landed message as it arrives, so received texts (and our own sends once the
-  // database records them) show up without a manual refresh.
   onMount(() => {
     const source = new EventSource("/api/events");
 
     source.addEventListener("message.received", (event) => {
       const msg = JSON.parse((event as MessageEvent).data) as Message;
 
-      // Keep the sidebar ordering current by patching just this conversation's
-      // recency — no full refetch. A message for a conversation we've never
-      // seen (a brand-new thread) is the one case that needs a refetch.
       let known = false;
       mutateConversations((prev) => {
         const list = prev ?? [];
@@ -314,8 +306,6 @@ export default function App() {
 
       if (msg.conversationId !== active()?.id) return;
 
-      // Only auto-scroll if the user is already near the bottom, so we don't
-      // yank them away while they're reading older messages.
       const nearBottom =
         scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <
         120;
@@ -327,10 +317,22 @@ export default function App() {
       if (nearBottom) toBottom();
     });
 
+    source.addEventListener("conversation.unread", (event) => {
+      const change = JSON.parse((event as MessageEvent).data) as {
+        conversationId: string;
+        unread: number;
+      };
+      setUnreadOverride((prev) => {
+        const next = change.conversationId === active()?.id ? 0 : change.unread;
+        return prev[change.conversationId] === next
+          ? prev
+          : { ...prev, [change.conversationId]: next };
+      });
+    });
+
     onCleanup(() => source.close());
   });
 
-  // Prepend the next older page, keeping the viewport anchored in place.
   const loadOlder = async () => {
     const conversation = active();
     const oldest = messages()[0];
@@ -474,7 +476,10 @@ export default function App() {
                             width: "100%",
                             transform: `translateY(${row.start}px)`,
                           }}
-                          onClick={() => setActive(conversation()!)}
+                          data-unread={
+                            unreadCount(conversation()!) > 0 ? "true" : undefined
+                          }
+                          onClick={() => open(conversation()!)}
                         >
                           <Avatar conversation={conversation()!} />
                           <span data-component="im-chat-meta">
@@ -485,6 +490,12 @@ export default function App() {
                               {time(conversation()!.lastMessageAt, true)}
                             </span>
                           </span>
+                          <Show when={unreadCount(conversation()!) > 0}>
+                            <span data-component="im-unread">
+                              {Math.min(unreadCount(conversation()!), 99)}
+                              {unreadCount(conversation()!) > 99 ? "+" : ""}
+                            </span>
+                          </Show>
                         </button>
                       </Show>
                     );
