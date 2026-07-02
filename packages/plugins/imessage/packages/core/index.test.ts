@@ -68,6 +68,7 @@ async function fixture() {
         is_read INTEGER DEFAULT 0,
         is_sent INTEGER DEFAULT 0,
         error INTEGER DEFAULT 0,
+        item_type INTEGER DEFAULT 0,
         service TEXT,
         associated_message_type INTEGER,
         attributedBody BLOB
@@ -342,6 +343,99 @@ describe("Client", () => {
     expect(args[4]).toBe("1");
   });
 
+  it("send() prefers the RCS thread over the SMS thread when both exist for a carrier recipient", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    // The same recipient split across a carrier SMS row and an RCS row, both
+    // alongside the fixture's iMessage row. On modern macOS Messages only
+    // exposes the RCS thread to scripting; `chat id "SMS;-;..."` errors (-1728),
+    // so the resolver must route to the RCS guid.
+    db.run(
+      "INSERT INTO chat(ROWID, chat_identifier, guid, display_name, service_name) VALUES (?1, ?2, ?3, ?4, ?5)",
+      [2, "+15551234567", "SMS;-;+15551234567", "Test Chat", "SMS"],
+    );
+    db.run(
+      "INSERT INTO chat(ROWID, chat_identifier, guid, display_name, service_name) VALUES (?1, ?2, ?3, ?4, ?5)",
+      [3, "+15551234567", "RCS;-;+15551234567", "Test Chat", "RCS"],
+    );
+
+    db.run("INSERT INTO handle(ROWID, id) VALUES (?1, ?2)", [
+      1,
+      "+15551234567",
+    ]);
+
+    // A delivered carrier message pins the service to sms.
+    db.run(
+      "INSERT INTO message(ROWID, handle_id, date, is_from_me, is_sent, error, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [1, 1, toAppleNs(Date.now() - 2000), 0, 0, 0, "RCS"],
+    );
+    db.close();
+
+    let args: readonly string[] = [];
+    const client = Client({
+      dbPath,
+      scriptRunner: (_script, scriptArgs) => {
+        args = scriptArgs;
+      },
+    });
+
+    client.send(1, "hello world");
+    client.close();
+
+    expect(args[2]).toBe("sms");
+    expect(args[3]).toBe("RCS;-;+15551234567");
+    expect(args[4]).toBe("1");
+  });
+
+  it("send() passes an attachment path as the trailing argv item", async () => {
+    const { dbPath } = await fixture();
+    let source = "";
+    let args: readonly string[] = [];
+
+    const client = Client({
+      dbPath,
+      scriptRunner: (script, scriptArgs) => {
+        source = script;
+        args = scriptArgs;
+      },
+    });
+
+    client.send(1, "look at this", "/tmp/outgoing/pic.png");
+    client.close();
+
+    // The script sends the file before the text, and the path rides in slot 6.
+    expect(source).toContain("send (POSIX file theAttachment)");
+    expect(args[1]).toBe("look at this");
+    expect(args[5]).toBe("/tmp/outgoing/pic.png");
+  });
+
+  it("send() allows an image with no caption", async () => {
+    const { dbPath } = await fixture();
+    let args: readonly string[] = [];
+
+    const client = Client({
+      dbPath,
+      scriptRunner: (_script, scriptArgs) => {
+        args = scriptArgs;
+      },
+    });
+
+    client.send(1, "", "/tmp/outgoing/pic.png");
+    client.close();
+
+    expect(args[1]).toBe("");
+    expect(args[5]).toBe("/tmp/outgoing/pic.png");
+  });
+
+  it("send() rejects an empty text with no attachment", async () => {
+    const { dbPath } = await fixture();
+    const client = Client({ dbPath, scriptRunner: () => {} });
+
+    expect(() => client.send(1, "   ")).toThrow();
+    client.close();
+  });
+
   it("subscribe() emits new messages", async () => {
     const { dbPath } = await fixture();
     const client = Client({ dbPath, debounceMs: 10, batchLimit: 10 });
@@ -584,6 +678,36 @@ describe("Client", () => {
     client.close();
 
     expect(unread.get("d:+15551234567")).toBe(2);
+  });
+
+  it("unread() ignores group system rows (renames/joins) that never get read", async () => {
+    const { dbPath } = await fixture();
+    const db = new Database(dbPath);
+
+    db.run("INSERT INTO handle(ROWID, id) VALUES (?1, ?2)", [1, "+15551234567"]);
+    db.run("INSERT INTO chat_handle_join(chat_id, handle_id) VALUES (1, 1)");
+
+    const insert = db.query(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, is_read, item_type, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    );
+    // received + unread real message → counts
+    insert.run(1, 1, "real unread", toAppleNs(Date.now() - 3000), 0, 0, 0, "iMessage");
+    // group rename (item_type=2), received with is_read=0 and never marked read
+    // → must NOT count, or the conversation badges forever.
+    insert.run(2, 1, "", toAppleNs(Date.now() - 2000), 0, 0, 2, "iMessage");
+    // someone left the group (item_type=3) → must NOT count.
+    insert.run(3, 1, "", toAppleNs(Date.now() - 1000), 0, 0, 3, "iMessage");
+
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 1), (1, 2), (1, 3)",
+    );
+    db.close();
+
+    const client = Client({ dbPath });
+    const unread = client.unread();
+    client.close();
+
+    expect(unread.get("d:+15551234567")).toBe(1);
   });
 
   it("conversations() keys groups on group_id, stable across membership changes", async () => {

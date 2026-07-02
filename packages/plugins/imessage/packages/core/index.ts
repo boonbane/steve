@@ -27,8 +27,12 @@ type Asbridge = {
 const Runner = z.custom<Runner>((value) => typeof value === "function");
 
 const ChatID = z.number().int().nonnegative();
-const Text = z.string().trim().min(1);
 
+// Messages' `send` verb takes either text or a file reference, so an attachment
+// is just a second `send` of `POSIX file <path>`. We send the file first, then
+// the text, so they land as image-then-caption. argv item 6 is the attachment
+// path ("" for a text-only send); either the text or the file may be empty, but
+// the caller guarantees at least one is present.
 const SendScript = `
 on run argv
     set theRecipient to item 1 of argv
@@ -36,10 +40,14 @@ on run argv
     set theService to item 3 of argv
     set chatId to item 4 of argv
     set useChat to item 5 of argv
+    set theAttachment to item 6 of argv
 
     tell application "Messages"
         if useChat is "1" then
             set targetChat to chat id chatId
+            if theAttachment is not "" then
+                send (POSIX file theAttachment) to targetChat
+            end if
             if theMessage is not "" then
                 send theMessage to targetChat
             end if
@@ -51,6 +59,9 @@ on run argv
             end if
 
             set targetBuddy to buddy theRecipient of targetService
+            if theAttachment is not "" then
+                send (POSIX file theAttachment) to targetBuddy
+            end if
             if theMessage is not "" then
                 send theMessage to targetBuddy
             end if
@@ -153,7 +164,7 @@ export interface IClient {
   conversation(id: string): Conversation | null;
   conversationByChat(chatId: number): Conversation | null;
   unread(): Map<string, number>;
-  send(chatId: number, text: string): void;
+  send(chatId: number, text: string, attachmentPath?: string): void;
   markRead(conversation: Conversation): Promise<boolean>;
   subscribeUnread(fn: (changes: UnreadChange[]) => void): () => void;
   sent(chatIds: number[], afterRowId: number, text: string): Message | null;
@@ -457,6 +468,7 @@ class SQLiteClient implements IClient {
   private readonly hasAssociatedMessageType: boolean;
   private readonly hasDestinationCallerID: boolean;
   private readonly hasIsRead: boolean;
+  private readonly hasItemType: boolean;
   private readonly hasGroupId: boolean;
   private readonly hasStyle: boolean;
   private readonly watchedFiles: Set<string>;
@@ -494,6 +506,7 @@ class SQLiteClient implements IClient {
     this.hasAssociatedMessageType = columns.has("associated_message_type");
     this.hasDestinationCallerID = columns.has("destination_caller_id");
     this.hasIsRead = columns.has("is_read");
+    this.hasItemType = columns.has("item_type");
     const chatCols = this.chatColumns();
     this.hasGroupId = chatCols.has("group_id");
     this.hasStyle = chatCols.has("style");
@@ -561,6 +574,10 @@ class SQLiteClient implements IClient {
   // message is read on the Mac without a new row landing, so this is recomputed
   // on every call (one cheap grouped scan) to always reflect current state.
   // Reaction/tapback rows are excluded so a like never reads as an unread reply.
+  // Group system rows (renames, joins/leaves — `item_type <> 0`) are excluded
+  // too: they're received with `is_read = 0` and never get marked read (there's
+  // no real message to open), so counting them badges a conversation forever —
+  // exactly what Messages.app does NOT do.
   unread(): Map<string, number> {
     const counts = new Map<string, number>();
     if (!this.hasIsRead) {
@@ -570,13 +587,14 @@ class SQLiteClient implements IClient {
     const reactionFilter = this.hasAssociatedMessageType
       ? " AND (m.associated_message_type IS NULL OR m.associated_message_type < 2000 OR m.associated_message_type > 3006)"
       : "";
+    const systemFilter = this.hasItemType ? " AND IFNULL(m.item_type, 0) = 0" : "";
     const rows = this.db
       .query(
         `
           SELECT cmj.chat_id AS chatId, COUNT(*) AS unread
           FROM message m
           JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
-          WHERE m.is_from_me = 0 AND m.is_read = 0${reactionFilter}
+          WHERE m.is_from_me = 0 AND m.is_read = 0${reactionFilter}${systemFilter}
           GROUP BY cmj.chat_id
         `,
       )
@@ -1076,9 +1094,13 @@ class SQLiteClient implements IClient {
     return expandHome(row.filename);
   }
 
-  send(chatId: number, text: string): void {
+  send(chatId: number, text: string, attachmentPath?: string): void {
     const id = ChatID.parse(chatId);
-    const content = Text.parse(text);
+    const content = text.trim();
+    const attachment = (attachmentPath ?? "").trim();
+    if (content.length === 0 && attachment.length === 0) {
+      throw new Error("send requires text or an attachment");
+    }
     const row = this.db
       .query(
         `
@@ -1111,7 +1133,14 @@ class SQLiteClient implements IClient {
       this.resolveSendGuid(identifier, service) || (row.guid ?? "").trim();
 
     if (guid.length > 0) {
-      this.execAppleScript(SendScript, ["", content, service, guid, "1"]);
+      this.execAppleScript(SendScript, [
+        "",
+        content,
+        service,
+        guid,
+        "1",
+        attachment,
+      ]);
       return;
     }
 
@@ -1121,7 +1150,14 @@ class SQLiteClient implements IClient {
       throw new Error(`Chat ${id} has no sendable identifier`);
     }
 
-    this.execAppleScript(SendScript, [handle, content, service, "", "0"]);
+    this.execAppleScript(SendScript, [
+      handle,
+      content,
+      service,
+      "",
+      "0",
+      attachment,
+    ]);
   }
 
   // Drive Messages to mark a conversation read for real (clears it on this Mac,
@@ -1166,11 +1202,13 @@ class SQLiteClient implements IClient {
   // Picks the chat guid to send to for the resolved service. A person often has
   // separate SMS/RCS/iMessage chat rows for the same handle, so we choose the
   // thread whose transport matches `service` rather than whichever row the
-  // caller referenced. For carrier sends we prefer the canonical "SMS" thread
-  // (Messages upgrades to RCS automatically when available). When no matching
-  // thread exists for a 1:1 handle we synthesize the guid, which Messages
-  // accepts; for anything else (e.g. group chats) we return "" so the caller
-  // falls back to the referenced row's guid.
+  // caller referenced. For carrier sends we prefer the "RCS" thread when one
+  // exists: on modern macOS the RCS thread is the live, scriptable one, and
+  // `chat id "SMS;-;+..."` errors out (-1728) whenever an RCS row shadows the
+  // SMS row (Messages downgrades to SMS on its own when RCS can't deliver). When
+  // no matching thread exists for a 1:1 handle we synthesize the guid, which
+  // Messages accepts; for anything else (e.g. group chats) we return "" so the
+  // caller falls back to the referenced row's guid.
   private resolveSendGuid(
     identifier: string,
     service: "sms" | "imessage",
@@ -1192,7 +1230,8 @@ class SQLiteClient implements IClient {
     const matches = rows.filter((r) => mapService(r.service) === service);
     const chosen =
       (service === "sms"
-        ? matches.find((r) => r.service.toLowerCase() === "sms")
+        ? matches.find((r) => r.service.toLowerCase() === "rcs") ??
+          matches.find((r) => r.service.toLowerCase() === "sms")
         : undefined) ?? matches[0];
 
     if (chosen != null) {

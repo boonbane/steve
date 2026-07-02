@@ -258,10 +258,55 @@ export default function App() {
 
   const [draft, setDraft] = createSignal("");
   const [sending, setSending] = createSignal(false);
-  const [pending, setPending] = createSignal<{ tempId: string; text: string }[]>(
-    [],
-  );
+  const [pending, setPending] = createSignal<
+    { tempId: string; text: string; imageUrl?: string }[]
+  >([]);
   const [error, setError] = createSignal<string | null>(null);
+
+  // The image staged for the next send (via the picker, paste, or drop) and a
+  // matching object-URL preview. The effect revokes the previous URL whenever the
+  // selection changes or the component unmounts, so nothing leaks.
+  const [image, setImage] = createSignal<File | null>(null);
+  const [imagePreview, setImagePreview] = createSignal<string | null>(null);
+  const [dragging, setDragging] = createSignal(false);
+  let fileInput!: HTMLInputElement;
+
+  createEffect(() => {
+    const file = image();
+    const url = file ? URL.createObjectURL(file) : null;
+    setImagePreview(url);
+    onCleanup(() => {
+      if (url) URL.revokeObjectURL(url);
+    });
+  });
+
+  const attachImage = (file: File | null | undefined) => {
+    if (file && file.type.startsWith("image/")) {
+      setError(null);
+      setImage(file);
+    }
+  };
+
+  const onPaste = (event: ClipboardEvent) => {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          event.preventDefault();
+          attachImage(file);
+        }
+        return;
+      }
+    }
+  };
+
+  const onDrop = (event: DragEvent) => {
+    event.preventDefault();
+    setDragging(false);
+    attachImage(event.dataTransfer?.files?.[0]);
+  };
 
   let scroller!: HTMLDivElement;
 
@@ -292,6 +337,21 @@ export default function App() {
 
   onMount(() => {
     const source = new EventSource("/api/events");
+
+    // Re-baseline unread on every (re)connect. The `conversation.unread` diff
+    // only fires while a subscriber is connected, and the server re-seeds its
+    // baseline from current state when one reconnects — so a read that lands
+    // while we're disconnected (server restart, sleep) never emits a "cleared"
+    // event, and the badge from the initial page load would stick forever.
+    // Refetching the list pulls fresh counts; we drop stale overrides so the
+    // server's truth wins, keeping only the open conversation pinned to 0.
+    source.addEventListener("open", () => {
+      refetchConversations();
+      setUnreadOverride((prev) => {
+        const id = active()?.id;
+        return id && prev[id] === 0 ? { [id]: 0 } : {};
+      });
+    });
 
     source.addEventListener("message.received", (event) => {
       const msg = JSON.parse((event as MessageEvent).data) as Message;
@@ -357,28 +417,44 @@ export default function App() {
     if (scroller.scrollTop < 80) loadOlder();
   };
 
+  // Drop an optimistic bubble by temp id, revoking its preview URL if it had one.
+  const dropPending = (tempId: string) =>
+    setPending((p) =>
+      p.filter((entry) => {
+        if (entry.tempId === tempId && entry.imageUrl) {
+          URL.revokeObjectURL(entry.imageUrl);
+        }
+        return entry.tempId !== tempId;
+      }),
+    );
+
   const send = async (event: Event) => {
     event.preventDefault();
     const conversation = active();
     const text = draft().trim();
-    if (!conversation || text.length === 0 || sending()) return;
+    const file = image();
+    if (!conversation || (text.length === 0 && !file) || sending()) return;
 
     // Each optimistic bubble carries a temp id, so we can retire exactly the
     // right one when the server hands back the real message — never matching on
-    // text (which collapses duplicate sends).
+    // text (which collapses duplicate sends). An image send shows its own
+    // preview URL while in flight (the real image then arrives over the stream).
     const tempId = nextTempId();
+    const imageUrl = file ? URL.createObjectURL(file) : undefined;
     setError(null);
     setDraft("");
-    setPending((p) => [...p, { tempId, text }]);
+    setImage(null);
+    setPending((p) => [...p, { tempId, text, imageUrl }]);
     setSending(true);
     toBottom();
 
     try {
-      const message = await sendMessage(conversation.id, text);
-      setPending((p) => p.filter((entry) => entry.tempId !== tempId));
+      const message = await sendMessage(conversation.id, text, file);
+      dropPending(tempId);
       // The server returns the landed message once it's in the database; add it
       // by id (deduped against any copy the event stream already delivered). A
-      // null result means it'll arrive over the stream instead.
+      // null result — always the case for an image send — means it'll arrive
+      // over the stream instead.
       if (message && active()?.id === conversation.id) {
         setMessages((prev) =>
           prev.some((m) => m.id === message.id) ? prev : [...prev, message],
@@ -386,8 +462,9 @@ export default function App() {
         toBottom();
       }
     } catch (err) {
-      setPending((p) => p.filter((entry) => entry.tempId !== tempId));
+      dropPending(tempId);
       setDraft(text);
+      if (file) setImage(file);
       setError(err instanceof Error ? err.message : "Failed to send");
     } finally {
       setSending(false);
@@ -571,7 +648,18 @@ export default function App() {
                     data-from-me="true"
                     data-pending="true"
                   >
-                    <span data-component="im-text">{entry.text}</span>
+                    <Show when={entry.imageUrl}>
+                      <div data-component="im-attachments">
+                        <img
+                          data-component="im-image"
+                          src={entry.imageUrl}
+                          alt=""
+                        />
+                      </div>
+                    </Show>
+                    <Show when={entry.text}>
+                      <span data-component="im-text">{entry.text}</span>
+                    </Show>
                     <span data-component="im-time">Sending…</span>
                   </div>
                 </div>
@@ -579,11 +667,71 @@ export default function App() {
             </For>
           </div>
 
-          <form data-component="im-composer" onSubmit={send}>
+          <form
+            data-component="im-composer"
+            data-dragging={dragging() ? "true" : undefined}
+            onSubmit={send}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={(e) => {
+              // Ignore drags moving between children; only clear when the cursor
+              // actually leaves the composer.
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                setDragging(false);
+              }
+            }}
+            onDrop={onDrop}
+          >
             <Show when={error()}>
               <p data-component="im-error">{error()}</p>
             </Show>
+            <Show when={imagePreview()}>
+              <div data-component="im-staged">
+                <img data-component="im-staged-img" src={imagePreview()!} alt="" />
+                <button
+                  type="button"
+                  data-component="im-staged-remove"
+                  aria-label="Remove image"
+                  onClick={() => setImage(null)}
+                >
+                  ✕
+                </button>
+              </div>
+            </Show>
             <div data-component="im-composer-row">
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={(e) => {
+                  attachImage(e.currentTarget.files?.[0]);
+                  e.currentTarget.value = ""; // allow re-picking the same file
+                }}
+              />
+              <button
+                type="button"
+                data-component="im-attach"
+                aria-label="Attach image"
+                disabled={sending()}
+                onClick={() => fileInput.click()}
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                </svg>
+              </button>
               <input
                 data-component="im-input"
                 type="text"
@@ -592,11 +740,14 @@ export default function App() {
                 value={draft()}
                 disabled={sending()}
                 onInput={(e) => setDraft(e.currentTarget.value)}
+                onPaste={onPaste}
               />
               <Button
                 type="submit"
                 variant="primary"
-                disabled={sending() || draft().trim().length === 0}
+                disabled={
+                  sending() || (draft().trim().length === 0 && !image())
+                }
               >
                 Send
               </Button>

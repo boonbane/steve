@@ -70,19 +70,34 @@ export async function markConversationRead(conversationId: string): Promise<void
   }
 }
 
+// Send text, an image, or both. With an image we post multipart/form-data (and
+// let the browser set the boundary); text-only stays JSON. A 202 (no body) means
+// the message will arrive over the event stream — return null so the caller
+// knows not to swap an optimistic bubble in by id.
 export async function sendMessage(
   conversationId: string,
   text: string,
+  image?: File | null,
 ): Promise<Message | null> {
-  const res = await fetch(`${conversationPath(conversationId)}/messages`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text }),
-  });
+  const url = `${conversationPath(conversationId)}/messages`;
+  const res = image
+    ? await fetch(url, { method: "POST", body: imageForm(text, image) })
+    : await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
   if (res.status === 202) return null;
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
     throw new Error(detail?.error ?? `send ${res.status}`);
   }
   return res.json();
+}
+
+function imageForm(text: string, image: File): FormData {
+  const form = new FormData();
+  form.set("text", text);
+  form.set("image", image, image.name || "image.png");
+  return form;
 }
