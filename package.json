@@ -53,19 +53,20 @@
     "desktop:dev": "bun run --cwd packages/desktop tauri dev",
     "desktop:build": "bun run --cwd packages/desktop tauri build",
     "serve": "bun run --cwd packages/server serve",
-    "format": "bun run ./tools/format.ts"
+    "format": "bun run ./tools/format.ts",
+    "imessage:tui": "bun run --cwd packages/plugins/imessage/packages/tui tui"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "prettier": "catalog:",
-    "turbo": "^2.8.10",
+    "turbo": "^2.10.3",
     "typescript": "catalog:"
   },
   "dependencies": {
-    "@kobalte/core": "^0.13.11",
-    "@opencode-ai/plugin": "^1.2.10",
-    "@opencode-ai/sdk": "^1.2.10",
+    "@kobalte/core": "^0.13.12",
+    "@opencode-ai/plugin": "^1.17.13",
+    "@opencode-ai/sdk": "^1.17.13",
     "node-notifier": "^10.0.1",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",
