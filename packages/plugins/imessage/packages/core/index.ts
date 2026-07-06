@@ -1,5 +1,4 @@
 import { Database } from "bun:sqlite";
-import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "fs";
 import path from "path";
@@ -13,8 +12,12 @@ const DEFAULT_HISTORY_LIMIT = 50;
 const DEFAULT_DEBOUNCE_MS = 250;
 const DEFAULT_BATCH_LIMIT = 100;
 const SEND_TIMEOUT_MS = 20_000;
+const MARK_READ_POLL_MS = 150;
+const MARK_READ_BACKGROUND_MS = 2_000;
+const MARK_READ_FOREGROUND_MS = 4_000;
 
 type Runner = (source: string, args: readonly string[]) => void;
+type Opener = (args: readonly string[]) => void | Promise<void>;
 type Subscriber = (message: Message) => void;
 
 export type UnreadChange = { conversationId: string; unread: number };
@@ -25,77 +28,49 @@ type Asbridge = {
 };
 
 const Runner = z.custom<Runner>((value) => typeof value === "function");
+const Opener = z.custom<Opener>((value) => typeof value === "function");
 
 const ChatID = z.number().int().nonnegative();
 
 // Messages' `send` verb takes either text or a file reference, so an attachment
 // is just a second `send` of `POSIX file <path>`. We send the file first, then
-// the text, so they land as image-then-caption. argv item 6 is the attachment
+// the text, so they land as image-then-caption. argv item 3 is the attachment
 // path ("" for a text-only send); either the text or the file may be empty, but
-// the caller guarantees at least one is present.
+// the caller guarantees at least one is present. Sends address the chat thread
+// by guid only — a guid encodes its transport (e.g. "SMS;-;+1555…"), and
+// Messages accepts synthesized guids for new 1:1 threads, so the legacy "buddy
+// of service" path (which enumerates services and errors with -1728 on modern
+// macOS) is never needed.
 const SendScript = `
 on run argv
-    set theRecipient to item 1 of argv
-    set theMessage to item 2 of argv
-    set theService to item 3 of argv
-    set chatId to item 4 of argv
-    set useChat to item 5 of argv
-    set theAttachment to item 6 of argv
+    set theMessage to item 1 of argv
+    set chatId to item 2 of argv
+    set theAttachment to item 3 of argv
 
     tell application "Messages"
-        if useChat is "1" then
-            set targetChat to chat id chatId
-            if theAttachment is not "" then
-                send (POSIX file theAttachment) to targetChat
-            end if
-            if theMessage is not "" then
-                send theMessage to targetChat
-            end if
-        else
-            if theService is "sms" then
-                set targetService to first service whose service type is SMS
-            else
-                set targetService to first service whose service type is iMessage
-            end if
-
-            set targetBuddy to buddy theRecipient of targetService
-            if theAttachment is not "" then
-                send (POSIX file theAttachment) to targetBuddy
-            end if
-            if theMessage is not "" then
-                send theMessage to targetBuddy
-            end if
+        set targetChat to chat id chatId
+        if theAttachment is not "" then
+            send (POSIX file theAttachment) to targetChat
+        end if
+        if theMessage is not "" then
+            send theMessage to targetChat
         end if
     end tell
 end run
 `;
 
+// Messages only commits a read for the visible chat when there has been recent
+// physical user input — selection and visibility alone never flip is_read on
+// an idle machine. When the background open doesn't land (nobody is at the
+// Mac), bring Messages forward and emit one harmless synthetic keystroke (a
+// bare Option key) to satisfy that presence gate.
 const MarkReadScript = `
 on run argv
-    set theHandle to item 1 of argv
-    set theScheme to item 2 of argv
+    set theURL to item 1 of argv
     tell application "Messages" to activate
-    delay 0.4
-    do shell script "open " & quoted form of (theScheme & ":" & theHandle)
-    delay 0.9
-    tell application "System Events"
-        tell process "Messages"
-            set didClick to false
-            repeat with e in (entire contents of window 1)
-                try
-                    if role of e is "AXRow" then
-                        if (value of attribute "AXSelected" of e) is true then
-                            click e
-                            set didClick to true
-                            exit repeat
-                        end if
-                    end if
-                end try
-            end repeat
-            if not didClick then error "no selected AXRow found in window 1"
-        end tell
-    end tell
-    return "clicked"
+    do shell script "open " & quoted form of theURL
+    delay 0.3
+    tell application "System Events" to key code 58
 end run
 `;
 
@@ -154,6 +129,7 @@ export const Options = z.object({
   debounceMs: z.number().int().positive().default(DEFAULT_DEBOUNCE_MS),
   batchLimit: z.number().int().positive().default(DEFAULT_BATCH_LIMIT),
   scriptRunner: Runner.optional(),
+  opener: Opener.optional(),
 });
 
 export type Options = z.infer<typeof Options>;
@@ -164,7 +140,7 @@ export interface IClient {
   conversation(id: string): Conversation | null;
   conversationByChat(chatId: number): Conversation | null;
   unread(): Map<string, number>;
-  send(chatId: number, text: string, attachmentPath?: string): void;
+  send(chatId: number, text: string, attachmentPath?: string): Promise<void>;
   markRead(conversation: Conversation): Promise<boolean>;
   subscribeUnread(fn: (changes: UnreadChange[]) => void): () => void;
   sent(chatIds: number[], afterRowId: number, text: string): Message | null;
@@ -351,32 +327,38 @@ function trimLeadingControl(value: string): string {
   return value.replace(/^[\x00-\x1f]+/g, "");
 }
 
-function findSequence(
-  haystack: Uint8Array,
-  needle: number[],
-  from: number,
-): number {
-  const limit = haystack.length - needle.length;
-  let index = from;
-
-  while (index <= limit) {
-    let matched = true;
-
-    for (let offset = 0; offset < needle.length; offset++) {
-      if (haystack[index + offset] !== needle[offset]) {
-        matched = false;
-        break;
-      }
-    }
-
-    if (matched) {
-      return index;
-    }
-
-    index++;
+function readTypedstreamString(data: Buffer, offset: number): string | null {
+  if (offset >= data.length) {
+    return null;
   }
 
-  return -1;
+  const tag = data[offset]!;
+  let length: number;
+  let start: number;
+
+  if (tag < 0x80) {
+    length = tag;
+    start = offset + 1;
+  } else if (tag === 0x81 && offset + 3 <= data.length) {
+    length = data[offset + 1]! | (data[offset + 2]! << 8);
+    start = offset + 3;
+  } else if (tag === 0x82 && offset + 5 <= data.length) {
+    length = data.readUInt32LE(offset + 1);
+    start = offset + 5;
+  } else {
+    return null;
+  }
+
+  const end = start + length;
+  if (length === 0 || end > data.length) {
+    return null;
+  }
+
+  if (end < data.length && data[end] !== 0x86) {
+    return null;
+  }
+
+  return data.subarray(start, end).toString("utf8");
 }
 
 function parseAttributedBody(
@@ -388,34 +370,17 @@ function parseAttributedBody(
     return "";
   }
 
-  const start = [0x01, 0x2b];
-  const end = [0x86, 0x84];
   let best = "";
-  let index = 0;
 
-  while (index + 1 < data.length) {
-    if (data[index] === start[0] && data[index + 1] === start[1]) {
-      const sliceStart = index + 2;
-      const sliceEnd = findSequence(data, end, sliceStart);
-
-      if (sliceEnd !== -1) {
-        let segment = data.subarray(sliceStart, sliceEnd);
-
-        if (segment.length > 1 && segment[0] === segment.length - 1) {
-          segment = segment.subarray(1);
-        }
-
-        const candidate = trimLeadingControl(
-          Buffer.from(segment).toString("utf8"),
-        );
-
-        if (candidate.length > best.length) {
-          best = candidate;
-        }
-      }
+  for (let index = 0; index + 2 < data.length; index++) {
+    if (data[index] !== 0x01 || data[index + 1] !== 0x2b) {
+      continue;
     }
 
-    index++;
+    const candidate = readTypedstreamString(data, index + 2);
+    if (candidate != null && candidate.length > best.length) {
+      best = candidate;
+    }
   }
 
   if (best.length > 0) {
@@ -500,6 +465,7 @@ class SQLiteClient implements IClient {
       readonly: true,
       safeIntegers: true,
     });
+    this.db.run("PRAGMA busy_timeout = 5000;");
 
     const columns = this.messageColumns();
     this.hasAttributedBody = columns.has("attributedbody");
@@ -1094,7 +1060,11 @@ class SQLiteClient implements IClient {
     return expandHome(row.filename);
   }
 
-  send(chatId: number, text: string, attachmentPath?: string): void {
+  async send(
+    chatId: number,
+    text: string,
+    attachmentPath?: string,
+  ): Promise<void> {
     const id = ChatID.parse(chatId);
     const content = text.trim();
     const attachment = (attachmentPath ?? "").trim();
@@ -1123,49 +1093,24 @@ class SQLiteClient implements IClient {
     const identifier = (row.identifier ?? "").trim();
     const service = this.resolveSendService(identifier, row.service ?? "");
 
-    // Prefer sending to an existing chat thread by guid. A guid encodes its
-    // transport (e.g. "SMS;-;+15551234567" vs "iMessage;-;+15551234567"), so
-    // Messages binds the right service without us going through the SMS "buddy"
-    // path — that path depends on enumerating Messages services/accounts, which
-    // errors out (-1728) and hangs on modern macOS. Fall back to the referenced
-    // row's own guid, and only then to the buddy path.
     const guid =
       this.resolveSendGuid(identifier, service) || (row.guid ?? "").trim();
 
-    if (guid.length > 0) {
-      this.execAppleScript(SendScript, [
-        "",
-        content,
-        service,
-        guid,
-        "1",
-        attachment,
-      ]);
-      return;
-    }
-
-    const handle = looksLikeHandle(identifier) ? identifier : "";
-
-    if (handle.length === 0) {
+    if (guid.length === 0) {
       throw new Error(`Chat ${id} has no sendable identifier`);
     }
 
-    this.execAppleScript(SendScript, [
-      handle,
-      content,
-      service,
-      "",
-      "0",
-      attachment,
-    ]);
+    await this.execAppleScriptAsync(SendScript, [content, guid, attachment]);
   }
 
-  // Drive Messages to mark a conversation read for real (clears it on this Mac,
-  // sends a read receipt where applicable, and syncs to other devices) — the
-  // database is read-only, so this is the only way to persist a read. Serialized
-  // and run async so it doesn't block the event loop or fight the foreground.
-  // Resolves true if it drove Messages, false if it was a no-op (a group, no
-  // handle, or already read). Best-effort: failures reject for the caller to log.
+  // Mark a conversation read by opening it in Messages via its URL scheme —
+  // the database is read-only, so Messages itself must write is_read. With
+  // someone at the Mac a background open (`open -g`) lands immediately and
+  // invisibly; on an idle machine it never does (see MarkReadScript), so we
+  // escalate — which is fine, since an idle machine has nobody watching it.
+  // Serialized so rapid opens don't fight over Messages' selection. Resolves
+  // true once the read is confirmed in the database, false for a no-op (a
+  // group, no handle, or already read) or if it never landed.
   markRead(conversation: Conversation): Promise<boolean> {
     const task = () => this.runMarkRead(conversation);
     const result = this.markReadChain.then(task, task);
@@ -1186,17 +1131,49 @@ class SQLiteClient implements IClient {
     if (handle.length === 0) {
       return false;
     }
-    // Skip if it's already read — a stale queued open, or read elsewhere since —
-    // so we don't yank Messages to the foreground for nothing.
+    // Skip if it's already read — a stale queued open, or read elsewhere since.
     if ((this.unread().get(conversation.id) ?? 0) === 0) {
       return false;
     }
 
-    await this.execAppleScriptAsync(MarkReadScript, [
-      handle,
-      mapService(conversation.service),
-    ]);
-    return true;
+    const url = `${mapService(conversation.service)}:${handle}`;
+
+    await this.openUrl(["-g", url]);
+    if (await this.confirmRead(conversation.id, MARK_READ_BACKGROUND_MS)) {
+      return true;
+    }
+
+    await this.execAppleScriptAsync(MarkReadScript, [url]);
+    return this.confirmRead(conversation.id, MARK_READ_FOREGROUND_MS);
+  }
+
+  private async openUrl(args: readonly string[]): Promise<void> {
+    if (this.options.opener) {
+      await this.options.opener(args);
+      return;
+    }
+
+    const proc = Bun.spawn(["/usr/bin/open", ...args], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+  }
+
+  private async confirmRead(
+    conversationId: string,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      if ((this.unread().get(conversationId) ?? 0) === 0) {
+        return true;
+      }
+      if (Date.now() >= deadline) {
+        return false;
+      }
+      await Bun.sleep(MARK_READ_POLL_MS);
+    }
   }
 
   // Picks the chat guid to send to for the resolved service. A person often has
@@ -1484,37 +1461,41 @@ class SQLiteClient implements IClient {
       return;
     }
 
-    if (this.subscribers.size > 0) {
-      const batch = this.options.batchLimit;
-      let shouldContinue = true;
+    try {
+      if (this.subscribers.size > 0) {
+        const batch = this.options.batchLimit;
+        let shouldContinue = true;
 
-      while (shouldContinue) {
-        const messages = this.selectAfter(this.cursor, batch);
+        while (shouldContinue) {
+          const messages = this.selectAfter(this.cursor, batch);
 
-        if (messages.length === 0) {
-          break;
-        }
-
-        for (const message of messages) {
-          if (message.id > this.cursor) {
-            this.cursor = message.id;
+          if (messages.length === 0) {
+            break;
           }
 
-          for (const subscriber of this.subscribers) {
-            try {
-              subscriber(message);
-            } catch {
-              continue;
+          for (const message of messages) {
+            if (message.id > this.cursor) {
+              this.cursor = message.id;
+            }
+
+            for (const subscriber of this.subscribers) {
+              try {
+                subscriber(message);
+              } catch {
+                continue;
+              }
             }
           }
+
+          shouldContinue = messages.length >= batch;
         }
-
-        shouldContinue = messages.length >= batch;
       }
-    }
 
-    if (this.unreadSubscribers.size > 0) {
-      this.emitUnreadChanges();
+      if (this.unreadSubscribers.size > 0) {
+        this.emitUnreadChanges();
+      }
+    } catch {
+      this.schedulePoll();
     }
   }
 
@@ -1556,57 +1537,13 @@ class SQLiteClient implements IClient {
     return toNumber(row?.maxRowID);
   }
 
-  private execAppleScript(source: string, args: readonly string[]): void {
-    const runner = this.options.scriptRunner ?? loadAsbridgeRunner();
-
-    if (runner) {
-      runner(source, args);
-      return;
-    }
-
-    const result = spawnSync(
-      "/usr/bin/osascript",
-      ["-l", "AppleScript", "-", ...args],
-      {
-        input: source,
-        encoding: "utf8",
-        timeout: SEND_TIMEOUT_MS,
-        killSignal: "SIGKILL",
-      },
-    );
-
-    const errorCode = (result.error as (Error & { code?: string }) | undefined)
-      ?.code;
-    if (errorCode === "ETIMEDOUT" || result.signal != null) {
-      throw new Error(
-        `Messages did not respond within ${SEND_TIMEOUT_MS / 1000}s; the send may not have gone through`,
-      );
-    }
-
-    if (result.error) {
-      throw result.error;
-    }
-
-    if (result.status === 0) {
-      return;
-    }
-
-    const detail = (
-      result.stderr ||
-      result.stdout ||
-      "AppleScript execution failed"
-    ).trim();
-    throw new Error(
-      detail.length > 0 ? detail : "AppleScript execution failed",
-    );
-  }
-
   private async execAppleScriptAsync(
     source: string,
     args: readonly string[],
   ): Promise<void> {
-    if (this.options.scriptRunner) {
-      this.options.scriptRunner(source, args);
+    const runner = this.options.scriptRunner ?? loadAsbridgeRunner();
+    if (runner) {
+      runner(source, args);
       return;
     }
 
@@ -1615,12 +1552,22 @@ class SQLiteClient implements IClient {
       { stdin: Buffer.from(source), stdout: "ignore", stderr: "pipe" },
     );
 
-    const killer = setTimeout(() => proc.kill(9), SEND_TIMEOUT_MS);
+    let timedOut = false;
+    const killer = setTimeout(() => {
+      timedOut = true;
+      proc.kill(9);
+    }, SEND_TIMEOUT_MS);
     let status: number;
     try {
       status = await proc.exited;
     } finally {
       clearTimeout(killer);
+    }
+
+    if (timedOut) {
+      throw new Error(
+        `Messages did not respond within ${SEND_TIMEOUT_MS / 1000}s; the send may not have gone through`,
+      );
     }
 
     if (status !== 0) {

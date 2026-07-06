@@ -32,7 +32,7 @@ export namespace SendCommand {
     },
   } as const;
 
-  export function run(argv: Record<string, unknown>): void {
+  export async function run(argv: Record<string, unknown>): Promise<void> {
     const args = Args.parse({
       chatId: typeof argv.chatId === "number" ? argv.chatId : undefined,
       text: typeof argv.text === "string" ? argv.text : undefined,
@@ -42,7 +42,7 @@ export namespace SendCommand {
     const client = Client({ dbPath: args.db });
 
     try {
-      client.send(args.chatId, args.text);
+      await client.send(args.chatId, args.text);
     } finally {
       client.close();
     }
@@ -56,7 +56,5 @@ export const send: CommandDef = {
   summary: "Send text",
   positionals: SendCommand.positionals,
   options: SendCommand.options,
-  handler: (argv) => {
-    SendCommand.run(argv as Record<string, unknown>);
-  },
+  handler: (argv) => SendCommand.run(argv as Record<string, unknown>),
 };

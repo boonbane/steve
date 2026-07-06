@@ -27,9 +27,27 @@ export const Schema = z.object({
   data: z.string().describe("Root data directory for steve").optional(),
   environments: z.record(z.string(), Environment).default({}),
   triggers: z.array(Trigger).default([]),
+  plugins: z
+    .object({
+      imessage: z
+        .object({
+          url: z
+            .string()
+            .describe("Hostname or base URL of the iMessage server")
+            .optional(),
+          port: z
+            .number()
+            .int()
+            .describe("Port of the iMessage server (default 8787)")
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export namespace Config {
+  export type Plugins = z.infer<typeof Schema>["plugins"];
   export type Resolved = z.infer<typeof Schema> & {
     dir: string;
     data: string;
@@ -60,6 +78,7 @@ export namespace Config {
       data: config.data ?? data,
       environments: config.environments,
       triggers: config.triggers,
+      plugins: config.plugins,
     };
   }
 }

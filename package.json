@@ -39,7 +39,10 @@
       "@types/yargs": "^17.0.33",
       "@spader/node-whisper-cpp": "^0.2.2",
       "zod": "^4.3.6",
-      "@tanstack/solid-virtual": "^3.13.30"
+      "@tanstack/solid-virtual": "^3.13.30",
+      "solid-js": "1.9.12",
+      "@opentui/core": "0.3.4",
+      "@opentui/solid": "0.3.4"
     }
   },
   "scripts": {

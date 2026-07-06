@@ -1,0 +1,27 @@
+{
+  "name": "steve-plugin-imessage-tui",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "imessage-tui": "src/index.tsx"
+  },
+  "scripts": {
+    "tui": "bun src/index.tsx",
+    "dev-server": "bun tools/dev-server.ts",
+    "dev": "bun src/index.tsx --url http://127.0.0.1:8788",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opentui/core": "catalog:",
+    "@opentui/solid": "catalog:",
+    "@steve/core": "workspace:*",
+    "solid-js": "catalog:"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

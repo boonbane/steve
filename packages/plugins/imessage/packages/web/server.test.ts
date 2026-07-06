@@ -116,6 +116,40 @@ describe("conversations API unread counts", () => {
   });
 });
 
+describe("request guard", () => {
+  let server: ReturnType<typeof createServer> | null = null;
+  afterEach(() => {
+    server?.stop(true);
+    server = null;
+  });
+
+  it("rejects untrusted Hosts (DNS rebinding) and untrusted Origins (CSRF)", async () => {
+    const { dbPath } = fixture();
+    const client = Client({ dbPath, scriptRunner: () => {} });
+    server = createServer({ client, nameDir }, 0);
+    const base = `http://localhost:${server.port}`;
+
+    const rebound = await fetch(`${base}/api/conversations`, {
+      headers: { host: "evil.example.com" },
+    });
+    expect(rebound.status).toBe(403);
+
+    const id = encodeURIComponent("d:+15553334444");
+    const csrf = await fetch(`${base}/api/conversations/${id}/messages`, {
+      method: "POST",
+      headers: { origin: "https://evil.example.com" },
+      body: JSON.stringify({ text: "pwned" }),
+    });
+    expect(csrf.status).toBe(403);
+
+    const ok = await fetch(`${base}/api/conversations`, {
+      headers: { origin: base },
+    });
+    expect(ok.status).toBe(200);
+    client.close();
+  });
+});
+
 describe("read API", () => {
   let server: ReturnType<typeof createServer> | null = null;
   afterEach(() => {
@@ -123,15 +157,19 @@ describe("read API", () => {
     server = null;
   });
 
-  it("POST /read drives the injected script runner for a 1:1", async () => {
+  it("POST /read opens the conversation via the injected opener for a 1:1", async () => {
     const { dbPath } = fixture();
     const calls: string[][] = [];
     let fired: () => void;
     const ran = new Promise<void>((resolve) => (fired = resolve));
+    const db = new Database(dbPath);
     const client = Client({
       dbPath,
-      scriptRunner: (_source, args) => {
+      // Flip the read like Messages would, so markRead's confirm poll settles
+      // instead of outliving the test.
+      opener: (args) => {
         calls.push([...args]);
+        db.run("UPDATE message SET is_read = 1 WHERE ROWID = 3");
         fired();
       },
     });
@@ -145,16 +183,16 @@ describe("read API", () => {
     );
     expect(res.status).toBe(202); // fire-and-forget
 
-    // markRead runs async off the request; wait for the AppleScript boundary.
+    // markRead runs async off the request; wait for the open boundary.
     await Promise.race([
       ran,
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("script runner never fired")), 2000),
+        setTimeout(() => reject(new Error("opener never fired")), 2000),
       ),
     ]);
     client.close();
+    db.close();
 
-    // First arg to MarkReadScript is the handle to open.
-    expect(calls[0]?.[0]).toBe("+15553334444");
+    expect(calls[0]).toEqual(["-g", "imessage:+15553334444"]);
   });
 });

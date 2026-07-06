@@ -14,6 +14,52 @@ import { Names } from "./names.ts";
 
 const PORT = 8787;
 
+const HOST = process.env.IMSG_WEB_HOST ?? "127.0.0.1";
+
+const EXTRA_HOSTS = new Set(
+  (process.env.IMSG_WEB_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value.length > 0),
+);
+
+function hostName(value: string): string {
+  const bracket = value.match(/^\[([^\]]+)\]/);
+  if (bracket) return bracket[1].toLowerCase();
+  return value.replace(/:\d+$/, "").toLowerCase();
+}
+
+function isTrustedHost(value: string | null): boolean {
+  if (!value) return false;
+  const name = hostName(value);
+  if (name === "localhost" || name === "127.0.0.1" || name === "::1") {
+    return true;
+  }
+  if (name.endsWith(".ts.net")) return true;
+  const cgnat = name.match(/^100\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+  if (cgnat && Number(cgnat[1]) >= 64 && Number(cgnat[1]) <= 127) return true;
+  return EXTRA_HOSTS.has(name);
+}
+
+function guard(req: Request): Response | null {
+  if (!isTrustedHost(req.headers.get("host"))) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const origin = req.headers.get("origin");
+  if (origin != null) {
+    let originHost: string | null = null;
+    try {
+      originHost = new URL(origin).host;
+    } catch {}
+    if (!isTrustedHost(originHost)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+  }
+
+  return null;
+}
+
 // The contact-lookup surface the API needs. The real `Names` namespace
 // satisfies it; a test injects a trivial stub so it never touches Contacts/FFI.
 export type NameDirectory = Pick<typeof Names, "resolve" | "label" | "avatar">;
@@ -379,7 +425,7 @@ export function createApp({ client, nameDir }: AppDeps) {
       try {
         const before = client.latestRowId();
         try {
-          client.send(
+          await client.send(
             conversation.sendChatId,
             text,
             attachmentPath ?? undefined,
@@ -570,30 +616,32 @@ export function createServer(deps: AppDeps, port: number = PORT) {
   // heartbeat keeps data flowing well within the window.
   return Bun.serve({
     port,
+    hostname: HOST,
     idleTimeout: 255,
     routes: {
       "/api/conversations": {
-        GET: (req) => app.listConversations(req),
+        GET: (req) => guard(req) ?? app.listConversations(req),
       },
       "/api/conversations/:id": {
-        GET: (req) => app.getConversation(req.params.id),
+        GET: (req) => guard(req) ?? app.getConversation(req.params.id),
       },
       "/api/conversations/:id/messages": {
         GET: (req) =>
+          guard(req) ??
           app.getMessages(req.params.id, new URL(req.url).searchParams, req),
-        POST: (req) => app.postMessage(req.params.id, req),
+        POST: (req) => guard(req) ?? app.postMessage(req.params.id, req),
       },
       "/api/conversations/:id/read": {
-        POST: (req) => app.postRead(req.params.id),
+        POST: (req) => guard(req) ?? app.postRead(req.params.id),
       },
       "/api/conversations/:id/avatar": {
-        GET: (req) => app.serveAvatar(req.params.id),
+        GET: (req) => guard(req) ?? app.serveAvatar(req.params.id),
       },
       "/api/events": {
-        GET: (req) => app.events(req),
+        GET: (req) => guard(req) ?? app.events(req),
       },
       "/api/attachments/:id": {
-        GET: (req) => app.serveAttachment(Number(req.params.id)),
+        GET: (req) => guard(req) ?? app.serveAttachment(Number(req.params.id)),
       },
     },
     fetch() {

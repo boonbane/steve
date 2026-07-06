@@ -202,6 +202,50 @@ describe("IMsgDaemon", () => {
       const output = await readUntil(reader, "event: message.received");
 
       expect(output).toContain('"text":"live"');
+      expect(output).toContain("id: 1");
+    } finally {
+      if (reader) {
+        await reader.cancel();
+      }
+
+      daemon.close();
+    }
+  });
+
+  it("replays the gap after a Last-Event-ID cursor before tailing live", async () => {
+    const { dbPath } = await fixture();
+
+    const db = new Database(dbPath);
+    db.run("INSERT INTO handle(ROWID, id) VALUES (1, '+15550001111')");
+    for (const id of [1, 2]) {
+      db.run(
+        "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        [id, 1, `m${id}`, toAppleNs(Date.now() - (10 - id) * 1000), 0, "iMessage"],
+      );
+      db.run(
+        "INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, ?1)",
+        [id],
+      );
+    }
+    db.close();
+
+    const daemon = IMsgDaemon.start({
+      port: 0,
+      dbPath,
+      debounceMs: 10,
+      batchLimit: 10,
+    });
+
+    let reader: Reader | null = null;
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${daemon.port}/events?lastEventId=1`,
+      );
+      reader = response.body!.getReader() as Reader;
+
+      const output = await readUntil(reader, '"text":"m2"');
+      expect(output).not.toContain('"text":"m1"');
     } finally {
       if (reader) {
         await reader.cancel();

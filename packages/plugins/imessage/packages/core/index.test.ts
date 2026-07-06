@@ -208,6 +208,47 @@ describe("Client", () => {
     expect(messages[1]?.id).toBe(1);
   });
 
+  it("history() decodes typedstream attributedBody, including multi-byte lengths", async () => {
+    const { dbPath } = await fixture();
+
+    const framed = (text: string): Buffer => {
+      const bytes = Buffer.from(text, "utf8");
+      const length =
+        bytes.length < 0x80
+          ? Buffer.from([bytes.length])
+          : Buffer.from([0x81, bytes.length & 0xff, bytes.length >> 8]);
+      return Buffer.concat([
+        Buffer.from("streamtyped???NSAttributedString", "latin1"),
+        Buffer.from([0x01, 0x2b]),
+        length,
+        bytes,
+        Buffer.from([0x86, 0x84]),
+      ]);
+    };
+
+    const short = "hello";
+    const long = "long message body ".repeat(20).trim();
+
+    const db = new Database(dbPath);
+    db.run("INSERT INTO handle(ROWID, id) VALUES (1, '+15550001111')");
+    const insert = db.query(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, service, attributedBody) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    );
+    insert.run(1, 1, "", toAppleNs(Date.now() - 2000), 0, "iMessage", framed(short));
+    insert.run(2, 1, "", toAppleNs(Date.now() - 1000), 0, "iMessage", framed(long));
+    db.run(
+      "INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 1), (1, 2)",
+    );
+    db.close();
+
+    const client = Client({ dbPath });
+    const messages = client.history(1, 10, true);
+    client.close();
+
+    expect(messages[0]?.text).toBe(short);
+    expect(messages[1]?.text).toBe(long);
+  });
+
   it("since() and latestMessageAt() support timestamp cursors", async () => {
     const { dbPath } = await fixture();
     const firstAt = 1_700_000_000_000;
@@ -283,16 +324,14 @@ describe("Client", () => {
       },
     });
 
-    client.send(1, "hello world");
+    await client.send(1, "hello world");
     client.close();
 
-    // Routes through the chat thread by guid (chat-target path), not the buddy
-    // path: empty recipient, the chat guid in slot 3, useChat flag set.
+    // Routes through the chat thread by guid: text, guid, attachment.
     expect(source).toContain('tell application "Messages"');
-    expect(args[0]).toBe("");
-    expect(args[1]).toBe("hello world");
-    expect(args[3]).toBe("iMessage;+;chat123");
-    expect(args[4]).toBe("1");
+    expect(args[0]).toBe("hello world");
+    expect(args[1]).toBe("iMessage;+;chat123");
+    expect(args[2]).toBe("");
   });
 
   it("send() resolves the service from the latest delivered message and routes to the matching thread", async () => {
@@ -335,12 +374,10 @@ describe("Client", () => {
 
     // Caller references the iMessage chat row, but the resolver must pick the
     // carrier service and route to the SMS thread guid.
-    client.send(1, "hello world");
+    await client.send(1, "hello world");
     client.close();
 
-    expect(args[2]).toBe("sms");
-    expect(args[3]).toBe("SMS;-;+15551234567");
-    expect(args[4]).toBe("1");
+    expect(args[1]).toBe("SMS;-;+15551234567");
   });
 
   it("send() prefers the RCS thread over the SMS thread when both exist for a carrier recipient", async () => {
@@ -380,12 +417,10 @@ describe("Client", () => {
       },
     });
 
-    client.send(1, "hello world");
+    await client.send(1, "hello world");
     client.close();
 
-    expect(args[2]).toBe("sms");
-    expect(args[3]).toBe("RCS;-;+15551234567");
-    expect(args[4]).toBe("1");
+    expect(args[1]).toBe("RCS;-;+15551234567");
   });
 
   it("send() passes an attachment path as the trailing argv item", async () => {
@@ -401,13 +436,13 @@ describe("Client", () => {
       },
     });
 
-    client.send(1, "look at this", "/tmp/outgoing/pic.png");
+    await client.send(1, "look at this", "/tmp/outgoing/pic.png");
     client.close();
 
-    // The script sends the file before the text, and the path rides in slot 6.
+    // The script sends the file before the text, and the path rides in slot 3.
     expect(source).toContain("send (POSIX file theAttachment)");
-    expect(args[1]).toBe("look at this");
-    expect(args[5]).toBe("/tmp/outgoing/pic.png");
+    expect(args[0]).toBe("look at this");
+    expect(args[2]).toBe("/tmp/outgoing/pic.png");
   });
 
   it("send() allows an image with no caption", async () => {
@@ -421,18 +456,18 @@ describe("Client", () => {
       },
     });
 
-    client.send(1, "", "/tmp/outgoing/pic.png");
+    await client.send(1, "", "/tmp/outgoing/pic.png");
     client.close();
 
-    expect(args[1]).toBe("");
-    expect(args[5]).toBe("/tmp/outgoing/pic.png");
+    expect(args[0]).toBe("");
+    expect(args[2]).toBe("/tmp/outgoing/pic.png");
   });
 
   it("send() rejects an empty text with no attachment", async () => {
     const { dbPath } = await fixture();
     const client = Client({ dbPath, scriptRunner: () => {} });
 
-    expect(() => client.send(1, "   ")).toThrow();
+    await expect(client.send(1, "   ")).rejects.toThrow();
     client.close();
   });
 
@@ -492,7 +527,7 @@ describe("Client", () => {
     }
   });
 
-  it("markRead() drives Messages for an unread 1:1, skips groups and read chats", async () => {
+  it("markRead() opens the conversation, confirms the read, skips groups and read chats", async () => {
     const { dbPath } = await fixture();
     const seed = new Database(dbPath);
     seed.run(
@@ -502,38 +537,78 @@ describe("Client", () => {
     seed.run("INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 1)");
     seed.close();
 
-    const calls: Array<readonly string[]> = [];
+    const opens: Array<readonly string[]> = [];
     const client = Client({
       dbPath,
-      scriptRunner: (_source, args) => calls.push(args),
+      // Stands in for Messages: record the open, then flip is_read the way the
+      // real app would.
+      opener: (args) => {
+        opens.push([...args]);
+        const writer = new Database(dbPath);
+        writer.run("UPDATE message SET is_read = 1 WHERE ROWID = 1");
+        writer.close();
+      },
     });
 
     try {
       const conversation = client.conversation("d:+15551234567");
       expect(conversation).toBeTruthy();
 
-      // 1:1 with an unread message → drives Messages with [handle, scheme].
+      // 1:1 with an unread message → one background open, read confirmed.
       expect(await client.markRead(conversation!)).toBe(true);
-      expect(calls).toHaveLength(1);
-      expect(calls[0]?.[0]).toBe("+15551234567");
-      expect(calls[0]?.[1]).toBe("imessage");
+      expect(opens).toHaveLength(1);
+      expect(opens[0]).toEqual(["-g", "imessage:+15551234567"]);
 
-      // A group can't be addressed by handle → no-op, no extra script run.
+      // A group can't be addressed by handle → no-op, no open.
       expect(await client.markRead({ ...conversation!, isGroup: true })).toBe(
         false,
       );
-      expect(calls).toHaveLength(1);
+      expect(opens).toHaveLength(1);
 
-      // Once it's actually read, a repeat open is a no-op (nothing to clear).
-      const writer = new Database(dbPath);
-      writer.run("UPDATE message SET is_read = 1 WHERE ROWID = 1");
-      writer.close();
+      // Already read → a repeat markRead is a no-op (nothing to clear).
       expect(await client.markRead(conversation!)).toBe(false);
-      expect(calls).toHaveLength(1);
+      expect(opens).toHaveLength(1);
     } finally {
       client.close();
     }
   });
+
+  it("markRead() escalates to the foreground script when the background open doesn't land", async () => {
+    const { dbPath } = await fixture();
+    const seed = new Database(dbPath);
+    seed.run(
+      "INSERT INTO message(ROWID, handle_id, text, date, is_from_me, is_read, service) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+      [1, null, "hi", toAppleNs(Date.now()), 0, 0, "iMessage"],
+    );
+    seed.run("INSERT INTO chat_message_join(chat_id, message_id) VALUES (1, 1)");
+    seed.close();
+
+    const opens: Array<readonly string[]> = [];
+    const scripts: Array<readonly string[]> = [];
+    const client = Client({
+      dbPath,
+      // The background open goes nowhere (idle machine); only the escalation
+      // script flips the read.
+      opener: (args) => {
+        opens.push([...args]);
+      },
+      scriptRunner: (_source, args) => {
+        scripts.push([...args]);
+        const writer = new Database(dbPath);
+        writer.run("UPDATE message SET is_read = 1 WHERE ROWID = 1");
+        writer.close();
+      },
+    });
+
+    try {
+      const conversation = client.conversation("d:+15551234567");
+      expect(await client.markRead(conversation!)).toBe(true);
+      expect(opens).toEqual([["-g", "imessage:+15551234567"]]);
+      expect(scripts).toEqual([["imessage:+15551234567"]]);
+    } finally {
+      client.close();
+    }
+  }, 10_000);
 
   it("subscribeUnread() emits when a message is marked read in place", async () => {
     const { dbPath } = await fixture();
