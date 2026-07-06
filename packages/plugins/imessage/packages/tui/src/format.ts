@@ -1,5 +1,14 @@
 import type { Attachment, Conversation, Message } from "./api.ts";
 
+// Same as the web app: a conversation is "unknown" unless it maps to a
+// contact or is an email handle (groups count as resolved via any member).
+export function isKnown(conversation: Conversation): boolean {
+  return (
+    conversation.resolved ||
+    (!conversation.isGroup && conversation.identifier.includes("@"))
+  );
+}
+
 export function searchHaystack(conversation: Conversation): string {
   return [
     conversation.name,

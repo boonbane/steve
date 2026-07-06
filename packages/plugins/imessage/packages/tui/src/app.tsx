@@ -5,12 +5,12 @@ import { Composer } from "./components/composer.tsx";
 import { Messages, type MessagesHandle } from "./components/messages.tsx";
 import { Sidebar } from "./components/sidebar.tsx";
 import { createApi } from "./api.ts";
-import { filterConversations } from "./format.ts";
+import { filterConversations, isKnown } from "./format.ts";
 import { createAppStore, type Store } from "./store.ts";
 import { theme } from "./theme.ts";
 
-type Focus = "search" | "sidebar" | "messages" | "composer";
-const FOCUS_ORDER: Focus[] = ["search", "sidebar", "messages", "composer"];
+type Focus = "search" | "sidebar" | "filter" | "messages" | "composer";
+const FOCUS_ORDER: Focus[] = ["search", "sidebar", "filter", "messages", "composer"];
 
 export function App(props: { store?: Store; url?: string }) {
   const store = props.store ?? createAppStore(createApi(props.url));
@@ -19,14 +19,18 @@ export function App(props: { store?: Store; url?: string }) {
 
   const [focus, setFocus] = createSignal<Focus>("sidebar");
   const [query, setQuery] = createSignal("");
+  const [hideUnknown, setHideUnknown] = createSignal(false);
   // Selection tracks the conversation, not the row: live messages reorder the
   // list underneath the cursor and the highlight should follow.
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   let messagesHandle: MessagesHandle | undefined;
 
-  const filtered = createMemo(() =>
-    filterConversations(store.state.conversations, query()),
-  );
+  const filtered = createMemo(() => {
+    const base = hideUnknown()
+      ? store.state.conversations.filter(isKnown)
+      : store.state.conversations;
+    return filterConversations(base, query());
+  });
   const selectedIndex = createMemo(() => {
     const id = selectedId();
     const index = id ? filtered().findIndex((c) => c.id === id) : -1;
@@ -76,7 +80,9 @@ export function App(props: { store?: Store; url?: string }) {
 
   const cycleFocus = (direction: 1 | -1) => {
     // The message panes only join the cycle once a conversation is open.
-    const order: Focus[] = store.state.activeId ? FOCUS_ORDER : ["search", "sidebar"];
+    const order: Focus[] = store.state.activeId
+      ? FOCUS_ORDER
+      : ["search", "sidebar", "filter"];
     const at = order.indexOf(focus());
     const next = order[(Math.max(at, 0) + direction + order.length) % order.length]!;
     setFocus(next);
@@ -106,6 +112,18 @@ export function App(props: { store?: Store; url?: string }) {
       case "sidebar":
         handleSidebarKey(key);
         break;
+      case "filter":
+        if (
+          key.name === "space" ||
+          key.sequence === " " ||
+          key.name === "return" ||
+          key.name === "x"
+        ) {
+          setHideUnknown((v) => !v);
+        } else if (key.name === "q" && !key.ctrl && !key.meta) {
+          quit();
+        }
+        break;
       case "messages":
         handleMessagesKey(key);
         break;
@@ -127,6 +145,8 @@ export function App(props: { store?: Store; url?: string }) {
       enterConversation();
     } else if (key.name === "/") {
       focusLater("search");
+    } else if (key.name === "x") {
+      setHideUnknown((v) => !v);
     } else if (key.name === "q" && !key.ctrl && !key.meta) {
       quit();
     }
@@ -172,7 +192,9 @@ export function App(props: { store?: Store; url?: string }) {
     const hints =
       focus() === "composer"
         ? "enter send · ctrl-j newline · esc back · tab focus"
-        : "tab focus · j/k move · enter open · / search · q quit";
+        : focus() === "filter"
+          ? "space toggle · tab focus · q quit"
+          : "tab focus · j/k move · enter open · / search · x unknown · q quit";
     return ` ${hints}`;
   };
   const footerRight = () => {
@@ -203,6 +225,8 @@ export function App(props: { store?: Store; url?: string }) {
           onQuery={setQuery}
           searchFocused={focus() === "search"}
           listFocused={focus() === "sidebar"}
+          hideUnknown={hideUnknown()}
+          filterFocused={focus() === "filter"}
         />
         <box flexDirection="column" flexGrow={1}>
           <Messages

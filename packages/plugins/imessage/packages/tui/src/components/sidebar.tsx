@@ -12,6 +12,8 @@ export function Sidebar(props: {
   onQuery: (value: string) => void;
   searchFocused: boolean;
   listFocused: boolean;
+  hideUnknown: boolean;
+  filterFocused: boolean;
 }) {
   let scroll: ScrollBoxRenderable | undefined;
 
@@ -62,6 +64,20 @@ export function Sidebar(props: {
         <Show when={props.conversations.length === 0}>
           <text fg={theme.textMuted}> no conversations</text>
         </Show>
+        <box
+          height={1}
+          flexShrink={0}
+          paddingLeft={1}
+          backgroundColor={props.filterFocused ? theme.activeBg : "transparent"}
+        >
+          <text
+            fg={props.filterFocused ? theme.text : theme.textMuted}
+            wrapMode="none"
+            truncate
+          >
+            {`[${props.hideUnknown ? "x" : " "}] hide unknown numbers`}
+          </text>
+        </box>
       </box>
     </box>
   );

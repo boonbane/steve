@@ -87,10 +87,29 @@ test("slash focuses search and filters; escape restores", async () => {
   setup.renderer.destroy();
 });
 
+test("hide-unknown checkbox: x toggles from sidebar, space when focused", async () => {
+  const setup = await boot();
+  // "87654" is the unresolved shortcode fixture.
+  await frameWhen(setup, (f) => f.includes("87654"));
+  setup.mockInput.pressKey("x");
+  const hidden = await frameWhen(setup, (f) => !f.includes("87654"));
+  expect(hidden).toContain("[x] hide unknown numbers");
+
+  // Tab moves sidebar → checkbox; space toggles it back off.
+  setup.mockInput.pressKey("TAB");
+  await Bun.sleep(30);
+  setup.mockInput.pressKey(" ");
+  const restored = await frameWhen(setup, (f) => f.includes("87654"));
+  expect(restored).toContain("[ ] hide unknown numbers");
+  setup.renderer.destroy();
+});
+
 test("tab cycles into messages pane; g loads older history", async () => {
   const setup = await boot();
   await frameWhen(setup, (f) => f.includes("Sugar Magnolia"));
 
+  // sidebar → filter checkbox → messages
+  setup.mockInput.pressKey("TAB");
   setup.mockInput.pressKey("TAB");
   await Bun.sleep(30);
   // Jump to top of loaded history, which triggers an older-page fetch.

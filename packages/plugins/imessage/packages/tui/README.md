@@ -48,13 +48,16 @@ or bind it to the tailnet with `IMSG_WEB_HOST`).
 
 ## Keys
 
-- `tab` / `shift-tab` — cycle focus: search → sidebar → messages → composer
+- `tab` / `shift-tab` — cycle focus: search → sidebar → hide-unknown checkbox
+  → messages → composer
 - `j` / `k` (or arrows) — move selection (sidebar) / scroll (messages)
 - `enter` — open selected conversation and focus the composer; in the
   composer, send (`ctrl-j` inserts a newline)
 - `ctrl-d` / `ctrl-u` — half-page scroll; `g` / `G` — top (loads older
   history) / bottom
 - `/` — jump to search; `escape` — back out (clears search)
+- `x` — toggle "hide unknown numbers" (unresolved, non-email senders); also
+  `space`/`enter` on the checkbox when it's focused
 - `q` — quit (sidebar/messages)
 
 ## Dev loop
