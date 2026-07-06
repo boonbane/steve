@@ -341,6 +341,16 @@ export function createApp({ client, nameDir }: AppDeps) {
     return json(enrichConversations(client.conversations()), 200, req);
   }
 
+  function health(): Response {
+    try {
+      const latestMessageAt = client.latestMessageAt();
+      return json({ status: "ok", latestMessageAt });
+    } catch (error) {
+      consola.error("health check failed", error);
+      return json({ status: "error" }, 503);
+    }
+  }
+
   // GET /api/conversations/:id — a single conversation by its stable id.
   function getConversation(rawId: string): Response {
     const conversation = client.conversation(decodeURIComponent(rawId));
@@ -604,6 +614,7 @@ export function createApp({ client, nameDir }: AppDeps) {
     serveAvatar,
     serveAttachment,
     events,
+    health,
   };
 }
 
@@ -619,6 +630,9 @@ export function createServer(deps: AppDeps, port: number = PORT) {
     hostname: HOST,
     idleTimeout: 255,
     routes: {
+      "/api/health": {
+        GET: (req) => guard(req) ?? app.health(),
+      },
       "/api/conversations": {
         GET: (req) => guard(req) ?? app.listConversations(req),
       },
