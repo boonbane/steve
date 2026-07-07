@@ -109,14 +109,22 @@ test("image attachments render as kitty placeholder cells when supported", async
     () => <App store={createAppStore(createApi(server.url))} />,
     { width: 110, height: 32 },
   );
-  // Must land before the thread preview mounts InlineImage components:
-  // capabilities are read at mount and there's no event from the test helper.
-  setRendererCapabilities(setup.renderer, { kitty_graphics: true });
+  // The panes sample capabilities at mount and then listen for the renderer's
+  // "capabilities" event (the real terminal answers the startup query
+  // asynchronously); the test helper only sets the field, so emit the event
+  // the way the query response would.
+  const caps = setRendererCapabilities(setup.renderer, { kitty_graphics: true });
+  setup.renderer.emit("capabilities", caps);
   await frameWhen(setup, (f) => f.includes("Jerry Garcia"));
 
   // The seeded thread has image attachments; with kitty graphics enabled they
-  // render as U+10EEEE placeholder cells instead of the text label.
-  const frame = await frameWhen(setup, (f) => f.includes("\u{10EEEE}"));
+  // render as a multi-row grid of U+10EEEE placeholder cells instead of the
+  // text label. (Sidebar avatars also emit single placeholder cells, so
+  // require a tall run to know the thread image itself rendered.)
+  const frame = await frameWhen(
+    setup,
+    (f) => f.split("\n").filter((line) => line.includes("\u{10EEEE}")).length >= 10,
+  );
   expect(frame).not.toContain("IMG_0042.jpg");
   setup.renderer.destroy();
 });

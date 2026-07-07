@@ -117,6 +117,16 @@ export function createApi(baseUrl: string = DEFAULT_BASE_URL) {
       return new Uint8Array(await res.arrayBuffer());
     },
 
+    // Contact photo as PNG for a 1:1 conversation; 404s for groups and
+    // contacts without a photo.
+    async avatarThumb(conversationId: string, maxpx: number): Promise<Uint8Array> {
+      const res = await fetch(
+        `${conversationPath(conversationId)}/avatar?thumb=${maxpx}`,
+      );
+      if (!res.ok) throw new Error(`avatar ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+
     async markRead(conversationId: string): Promise<void> {
       try {
         await fetch(`${conversationPath(conversationId)}/read`, { method: "POST" });

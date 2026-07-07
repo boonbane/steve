@@ -256,6 +256,7 @@ export function App(props: {
           listFocused={focus() === "sidebar"}
           hideUnknown={hideUnknown()}
           filterFocused={focus() === "filter"}
+          api={store.api}
         />
         <box flexDirection="column" flexGrow={1}>
           <Messages

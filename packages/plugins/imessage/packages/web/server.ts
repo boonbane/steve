@@ -302,13 +302,43 @@ export function createApp({ client, nameDir }: AppDeps) {
   }
 
   // Downscaled PNG for terminal inline rendering (the TUI feeds these bytes
-  // straight into the kitty graphics escape, which only takes PNG). sips reads
-  // every format Messages stores, including HEIC.
+  // straight into the kitty graphics escape, which only takes PNG). qlmanage
+  // rather than sips: QuickLook applies EXIF orientation — iPhone photos store
+  // sensor-native pixels plus a rotation flag, and sips copies the pixels while
+  // dropping the flag, shipping sideways thumbnails. qlmanage names its output
+  // after the source file, so each conversion runs in its own temp dir to keep
+  // concurrent requests for same-named files (image.png is everywhere) apart.
   function thumbPng(src: string, id: number, maxpx: number): string | null {
     fs.mkdirSync(CONVERT_DIR, { recursive: true });
     const out = path.join(CONVERT_DIR, `${id}.t${maxpx}.png`);
     if (fs.existsSync(out)) return out;
 
+    const workDir = fs.mkdtempSync(path.join(CONVERT_DIR, "ql-"));
+    try {
+      const result = spawnSync(
+        "/usr/bin/qlmanage",
+        ["-t", "-s", String(maxpx), "-o", workDir, src],
+        { encoding: "utf8" },
+      );
+      const produced = path.join(workDir, `${path.basename(src)}.png`);
+      if (result.status !== 0 || !fs.existsSync(produced)) return null;
+      fs.renameSync(produced, out);
+      return out;
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  }
+
+  // Avatar bytes come from Contacts (already upright, no EXIF concerns), so a
+  // plain sips resize+convert is enough; it just needs the bytes on disk first.
+  function avatarPng(image: Uint8Array, conversationId: string, maxpx: number): string | null {
+    fs.mkdirSync(CONVERT_DIR, { recursive: true });
+    const key = Bun.hash(conversationId).toString(16);
+    const out = path.join(CONVERT_DIR, `ava-${key}.t${maxpx}.png`);
+    if (fs.existsSync(out)) return out;
+
+    const src = path.join(CONVERT_DIR, `ava-${key}.src`);
+    fs.writeFileSync(src, image);
     const result = spawnSync(
       "/usr/bin/sips",
       ["-Z", String(maxpx), "-s", "format", "png", src, "--out", out],
@@ -371,7 +401,7 @@ export function createApp({ client, nameDir }: AppDeps) {
     return new Response(Bun.file(resolved), { headers: cache });
   }
 
-  function serveAvatar(rawId: string): Response {
+  function serveAvatar(rawId: string, params?: URLSearchParams): Response {
     const conversation = client.conversation(decodeURIComponent(rawId));
     if (!conversation || conversation.isGroup) {
       return new Response("Not found", { status: 404 });
@@ -382,11 +412,21 @@ export function createApp({ client, nameDir }: AppDeps) {
       return new Response("Not found", { status: 404 });
     }
 
+    const cache = { "cache-control": "max-age=86400" };
+
+    // ?thumb=<maxpx> — PNG variant for terminal inline rendering.
+    const thumbRaw = params?.get("thumb");
+    if (thumbRaw != null) {
+      const maxpx = Math.min(512, Math.max(16, Number(thumbRaw) || 0));
+      const png = avatarPng(image, conversation.id, maxpx);
+      if (!png) return new Response("Conversion failed", { status: 500 });
+      return new Response(Bun.file(png), {
+        headers: { ...cache, "content-type": "image/png" },
+      });
+    }
+
     return new Response(image, {
-      headers: {
-        "content-type": "image/jpeg",
-        "cache-control": "max-age=86400",
-      },
+      headers: { ...cache, "content-type": "image/jpeg" },
     });
   }
 
@@ -703,7 +743,9 @@ export function createServer(deps: AppDeps, port: number = PORT) {
         POST: (req) => guard(req) ?? app.postRead(req.params.id),
       },
       "/api/conversations/:id/avatar": {
-        GET: (req) => guard(req) ?? app.serveAvatar(req.params.id),
+        GET: (req) =>
+          guard(req) ??
+          app.serveAvatar(req.params.id, new URL(req.url).searchParams),
       },
       "/api/events": {
         GET: (req) => guard(req) ?? app.events(req),

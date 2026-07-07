@@ -1,4 +1,6 @@
 import type { CliRenderer, TerminalCapabilities } from "@opentui/core";
+import { useRenderer } from "@opentui/solid";
+import { createSignal, onCleanup } from "solid-js";
 
 // Inline images over the Kitty graphics protocol, Unicode-placeholder flavor
 // (the same mechanism yazi's kgp driver uses):
@@ -45,6 +47,9 @@ export const MAX_ROWS = 18;
 
 export type Grid = { cols: number; rows: number };
 
+// A contact avatar: one row tall, two cells wide ≈ square at 2:1 cell aspect.
+export const AVATAR_GRID: Grid = { cols: 2, rows: 1 };
+
 // writeOut is TS-private on CliRenderer but is the supported-by-behavior way
 // to interleave raw sequences with frames: it routes through the native
 // renderer's output channel, so it serializes with frame writes even when
@@ -55,6 +60,35 @@ export function kittyGraphicsSupported(
   capabilities: TerminalCapabilities | null,
 ): boolean {
   return capabilities?.kitty_graphics === true;
+}
+
+// Reactive capability check — the terminal's response to the startup query
+// arrives asynchronously. Call once per pane, not per row: each call installs
+// a renderer event listener.
+export function useKittyGraphics(): () => boolean {
+  const renderer = useRenderer();
+  const [capabilities, setCapabilities] = createSignal<TerminalCapabilities | null>(
+    renderer.capabilities,
+  );
+  const onCapabilities = (caps: TerminalCapabilities) => setCapabilities(caps);
+  renderer.on("capabilities", onCapabilities);
+  onCleanup(() => renderer.off("capabilities", onCapabilities));
+  return () => kittyGraphicsSupported(capabilities());
+}
+
+// Ids for images that aren't chat.db attachments (avatars). Attachments use
+// their ROWID directly; these are allocated from far above any plausible
+// ROWID so the two can never collide within the 24-bit id space.
+const dynamicIds = new Map<string, number>();
+let nextDynamicId = 0x800000;
+
+export function imageIdFor(key: string): number {
+  let id = dynamicIds.get(key);
+  if (id == null) {
+    id = nextDynamicId++;
+    dynamicIds.set(key, id);
+  }
+  return id;
 }
 
 // Width/height straight out of the PNG header (IHDR is always first, at a
@@ -104,7 +138,10 @@ export function placeholderRows(grid: Grid): string[] {
 
 // APC transmission: q=2 silences terminal responses (they would land in the
 // stdin parser), U=1 makes the placement virtual, f=100 is PNG passthrough.
-export function transmitEscape(id: number, png: Uint8Array): string {
+// c/r declare the placement's cell grid — without them the terminal shows the
+// image at its natural cell size, and the placeholder region becomes a
+// top-left crop of it instead of a scaled-to-fit rendering.
+export function transmitEscape(id: number, png: Uint8Array, grid: Grid): string {
   const b64 = Buffer.from(png).toString("base64");
   let out = "";
   for (let i = 0; i < b64.length; i += 4096) {
@@ -112,7 +149,7 @@ export function transmitEscape(id: number, png: Uint8Array): string {
     const more = i + 4096 < b64.length ? 1 : 0;
     out +=
       i === 0
-        ? `\x1b_Gq=2,a=T,U=1,C=1,f=100,i=${id & 0xffffff},m=${more};${chunk}\x1b\\`
+        ? `\x1b_Gq=2,a=T,U=1,C=1,f=100,i=${id & 0xffffff},c=${grid.cols},r=${grid.rows},m=${more};${chunk}\x1b\\`
         : `\x1b_Gq=2,m=${more};${chunk}\x1b\\`;
   }
   return out;
@@ -131,6 +168,7 @@ export function ensureTransmitted(
   renderer: CliRenderer,
   id: number,
   png: Uint8Array,
+  grid: Grid,
 ): void {
   const key = id & 0xffffff;
   if (transmitted.has(key)) return;
@@ -139,6 +177,6 @@ export function ensureTransmitted(
     writer.writeOut(DELETE_ALL);
     transmitted.clear();
   }
-  writer.writeOut(transmitEscape(key, png));
+  writer.writeOut(transmitEscape(key, png, grid));
   transmitted.add(key);
 }

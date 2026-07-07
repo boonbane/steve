@@ -196,6 +196,15 @@ export function startDevServer(port = 0, { chatter = true } = {}) {
       },
       "/api/attachments/:id": () =>
         new Response(TINY_PNG, { headers: { "content-type": "image/png" } }),
+      "/api/conversations/:id/avatar": (
+        req: Bun.BunRequest<"/api/conversations/:id/avatar">,
+      ) => {
+        const conversation = find(req.params.id);
+        if (!conversation || conversation.isGroup) {
+          return new Response("Not found", { status: 404 });
+        }
+        return new Response(TINY_PNG, { headers: { "content-type": "image/png" } });
+      },
       "/api/events": (req: Request) => {
         let client: Client;
         const stream = new ReadableStream<Uint8Array>({

@@ -1,15 +1,15 @@
-import type { ScrollBoxRenderable, TerminalCapabilities } from "@opentui/core";
+import type { ScrollBoxRenderable } from "@opentui/core";
 import { useRenderer } from "@opentui/solid";
-import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, on, Show } from "solid-js";
 import type { Api, Attachment, Conversation, Message } from "../api.ts";
 import { attachmentLabel, bodyText, messageStamp, senderLabel } from "../format.ts";
 import {
   ensureTransmitted,
   fitGrid,
   idColor,
-  kittyGraphicsSupported,
   placeholderRows,
   pngSize,
+  useKittyGraphics,
 } from "../kitty.ts";
 import { theme } from "../theme.ts";
 import type { Thread } from "../store.ts";
@@ -35,6 +35,7 @@ export function Messages(props: {
   handle: (handle: MessagesHandle) => void;
 }) {
   let scroll: ScrollBoxRenderable | undefined;
+  const kitty = useKittyGraphics();
 
   // Anchor captured when a top-load starts; consumed once the prepended rows
   // have been laid out, so the viewport stays on the message it was showing.
@@ -127,6 +128,7 @@ export function Messages(props: {
                 message={message}
                 isGroup={props.conversation?.isGroup ?? false}
                 api={props.api}
+                kitty={kitty()}
               />
             )}
           </For>
@@ -136,7 +138,12 @@ export function Messages(props: {
   );
 }
 
-function MessageRow(props: { message: Message; isGroup: boolean; api: Api }) {
+function MessageRow(props: {
+  message: Message;
+  isGroup: boolean;
+  api: Api;
+  kitty: boolean;
+}) {
   const pending = () => props.message.id < 0;
   const body = () => bodyText(props.message);
   const header = () => {
@@ -170,7 +177,7 @@ function MessageRow(props: { message: Message; isGroup: boolean; api: Api }) {
       <For each={props.message.attachments}>
         {(attachment) =>
           attachment.kind === "image" && attachment.id > 0 ? (
-            <InlineImage attachment={attachment} api={props.api} />
+            <InlineImage attachment={attachment} api={props.api} enabled={props.kitty} />
           ) : (
             <text fg={theme.textMuted} wrapMode="none" truncate>
               {attachmentLabel(attachment)}
@@ -186,29 +193,21 @@ function MessageRow(props: { message: Message; isGroup: boolean; api: Api }) {
 // terminal supports the graphics protocol; anything else (unsupported
 // terminal, fetch/convert failure, capabilities still being queried) falls
 // back to the text label.
-function InlineImage(props: { attachment: Attachment; api: Api }) {
+function InlineImage(props: { attachment: Attachment; api: Api; enabled: boolean }) {
   const renderer = useRenderer();
   const [placement, setPlacement] = createSignal<{ rows: string[]; color: string } | null>(null);
 
-  // Capabilities arrive asynchronously from the terminal query; react when
-  // they land rather than sampling once.
-  const [capabilities, setCapabilities] = createSignal<TerminalCapabilities | null>(
-    renderer.capabilities,
-  );
-  const onCapabilities = (caps: TerminalCapabilities) => setCapabilities(caps);
-  renderer.on("capabilities", onCapabilities);
-  onCleanup(() => renderer.off("capabilities", onCapabilities));
-
   createEffect(() => {
-    if (placement() || !kittyGraphicsSupported(capabilities())) return;
+    if (placement() || !props.enabled) return;
     const id = props.attachment.id;
     void props.api
       .attachmentThumb(id, THUMB_PX)
       .then((png) => {
         const size = pngSize(png);
         if (!size) return;
-        ensureTransmitted(renderer, id, png);
-        setPlacement({ rows: placeholderRows(fitGrid(size)), color: idColor(id) });
+        const grid = fitGrid(size);
+        ensureTransmitted(renderer, id, png, grid);
+        setPlacement({ rows: placeholderRows(grid), color: idColor(id) });
       })
       .catch(() => {
         // Label fallback already showing.

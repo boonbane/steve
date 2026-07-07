@@ -66,9 +66,9 @@ describe("placeholderRows", () => {
 });
 
 describe("transmitEscape", () => {
-  test("single chunk carries all keys and final m=0", () => {
-    const apc = transmitEscape(0x0102fb, PNG_1x1);
-    expect(apc.startsWith("\x1b_Gq=2,a=T,U=1,C=1,f=100,i=66299,m=0;")).toBe(true);
+  test("single chunk carries all keys, the cell grid, and final m=0", () => {
+    const apc = transmitEscape(0x0102fb, PNG_1x1, { cols: 40, rows: 15 });
+    expect(apc.startsWith("\x1b_Gq=2,a=T,U=1,C=1,f=100,i=66299,c=40,r=15,m=0;")).toBe(true);
     expect(apc.endsWith("\x1b\\")).toBe(true);
     const b64 = apc.slice(apc.indexOf(";") + 1, -2);
     expect(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))).toEqual(PNG_1x1);
@@ -76,10 +76,10 @@ describe("transmitEscape", () => {
 
   test("large payloads chunk at 4096 with m=1 continuations", () => {
     const big = new Uint8Array(9000); // → 12000 base64 chars → 3 chunks
-    const apc = transmitEscape(7, big);
+    const apc = transmitEscape(7, big, { cols: 2, rows: 1 });
     const parts = apc.split("\x1b\\").filter(Boolean);
     expect(parts).toHaveLength(3);
-    expect(parts[0]).toContain("i=7,m=1;");
+    expect(parts[0]).toContain("i=7,c=2,r=1,m=1;");
     expect(parts[1]!.startsWith("\x1b_Gq=2,m=1;")).toBe(true);
     expect(parts[2]!.startsWith("\x1b_Gq=2,m=0;")).toBe(true);
     // Chunks reassemble to the original payload.
