@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { afterAll, expect, test } from "bun:test";
 import { testRender } from "@opentui/solid";
-import type { TestRendererSetup } from "@opentui/core/testing";
+import { setRendererCapabilities, type TestRendererSetup } from "@opentui/core/testing";
 import { App } from "../src/app.tsx";
 import { createApi } from "../src/api.ts";
 import { createAppStore } from "../src/store.ts";
@@ -101,6 +101,30 @@ test("hide-unknown checkbox: x toggles from sidebar, space when focused", async 
   setup.mockInput.pressKey(" ");
   const restored = await frameWhen(setup, (f) => f.includes("87654"));
   expect(restored).toContain("[ ] hide unknown numbers");
+  setup.renderer.destroy();
+});
+
+test("image attachments render as kitty placeholder cells when supported", async () => {
+  const setup = await testRender(
+    () => <App store={createAppStore(createApi(server.url))} />,
+    { width: 110, height: 32 },
+  );
+  // Must land before the thread preview mounts InlineImage components:
+  // capabilities are read at mount and there's no event from the test helper.
+  setRendererCapabilities(setup.renderer, { kitty_graphics: true });
+  await frameWhen(setup, (f) => f.includes("Jerry Garcia"));
+
+  // The seeded thread has image attachments; with kitty graphics enabled they
+  // render as U+10EEEE placeholder cells instead of the text label.
+  const frame = await frameWhen(setup, (f) => f.includes("\u{10EEEE}"));
+  expect(frame).not.toContain("IMG_0042.jpg");
+  setup.renderer.destroy();
+});
+
+test("image attachments fall back to labels without kitty graphics", async () => {
+  const setup = await boot();
+  const frame = await frameWhen(setup, (f) => f.includes("IMG_0042.jpg"));
+  expect(frame).not.toContain("\u{10EEEE}");
   setup.renderer.destroy();
 });
 

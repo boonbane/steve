@@ -1,9 +1,21 @@
-import type { ScrollBoxRenderable } from "@opentui/core";
-import { createEffect, For, on, Show } from "solid-js";
-import type { Conversation, Message } from "../api.ts";
+import type { ScrollBoxRenderable, TerminalCapabilities } from "@opentui/core";
+import { useRenderer } from "@opentui/solid";
+import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
+import type { Api, Attachment, Conversation, Message } from "../api.ts";
 import { attachmentLabel, bodyText, messageStamp, senderLabel } from "../format.ts";
+import {
+  ensureTransmitted,
+  fitGrid,
+  idColor,
+  kittyGraphicsSupported,
+  placeholderRows,
+  pngSize,
+} from "../kitty.ts";
 import { theme } from "../theme.ts";
 import type { Thread } from "../store.ts";
+
+// Thumbnail budget in source pixels; ~42 cols of cells even on hidpi.
+const THUMB_PX = 720;
 
 export type MessagesHandle = {
   scrollLine: (delta: number) => void;
@@ -18,6 +30,7 @@ export function Messages(props: {
   conversation: Conversation | null;
   thread: Thread | null;
   focused: boolean;
+  api: Api;
   onLoadOlder: () => void;
   handle: (handle: MessagesHandle) => void;
 }) {
@@ -113,6 +126,7 @@ export function Messages(props: {
               <MessageRow
                 message={message}
                 isGroup={props.conversation?.isGroup ?? false}
+                api={props.api}
               />
             )}
           </For>
@@ -122,7 +136,7 @@ export function Messages(props: {
   );
 }
 
-function MessageRow(props: { message: Message; isGroup: boolean }) {
+function MessageRow(props: { message: Message; isGroup: boolean; api: Api }) {
   const pending = () => props.message.id < 0;
   const body = () => bodyText(props.message);
   const header = () => {
@@ -154,12 +168,73 @@ function MessageRow(props: { message: Message; isGroup: boolean }) {
         </text>
       </Show>
       <For each={props.message.attachments}>
-        {(attachment) => (
-          <text fg={theme.textMuted} wrapMode="none" truncate>
-            {attachmentLabel(attachment)}
-          </text>
-        )}
+        {(attachment) =>
+          attachment.kind === "image" && attachment.id > 0 ? (
+            <InlineImage attachment={attachment} api={props.api} />
+          ) : (
+            <text fg={theme.textMuted} wrapMode="none" truncate>
+              {attachmentLabel(attachment)}
+            </text>
+          )
+        }
       </For>
     </box>
+  );
+}
+
+// Renders an image attachment as kitty Unicode-placeholder cells when the
+// terminal supports the graphics protocol; anything else (unsupported
+// terminal, fetch/convert failure, capabilities still being queried) falls
+// back to the text label.
+function InlineImage(props: { attachment: Attachment; api: Api }) {
+  const renderer = useRenderer();
+  const [placement, setPlacement] = createSignal<{ rows: string[]; color: string } | null>(null);
+
+  // Capabilities arrive asynchronously from the terminal query; react when
+  // they land rather than sampling once.
+  const [capabilities, setCapabilities] = createSignal<TerminalCapabilities | null>(
+    renderer.capabilities,
+  );
+  const onCapabilities = (caps: TerminalCapabilities) => setCapabilities(caps);
+  renderer.on("capabilities", onCapabilities);
+  onCleanup(() => renderer.off("capabilities", onCapabilities));
+
+  createEffect(() => {
+    if (placement() || !kittyGraphicsSupported(capabilities())) return;
+    const id = props.attachment.id;
+    void props.api
+      .attachmentThumb(id, THUMB_PX)
+      .then((png) => {
+        const size = pngSize(png);
+        if (!size) return;
+        ensureTransmitted(renderer, id, png);
+        setPlacement({ rows: placeholderRows(fitGrid(size)), color: idColor(id) });
+      })
+      .catch(() => {
+        // Label fallback already showing.
+      });
+  });
+
+  return (
+    <Show
+      when={placement()}
+      fallback={
+        <text fg={theme.textMuted} wrapMode="none" truncate>
+          {attachmentLabel(props.attachment)}
+        </text>
+      }
+    >
+      {(p) => (
+        <box flexDirection="column" flexShrink={0}>
+          <For each={p().rows}>
+            {(row) => (
+              <text fg={p().color} wrapMode="none">
+                {row}
+              </text>
+            )}
+          </For>
+        </box>
+      )}
+    </Show>
   );
 }

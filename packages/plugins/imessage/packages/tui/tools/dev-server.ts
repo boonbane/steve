@@ -104,6 +104,15 @@ function seedThread(conversation: Conversation): Message[] {
   });
 }
 
+// A real 12×8 gradient PNG so the inline-image path can be exercised without
+// chat.db: valid signature, parseable IHDR dimensions, decodable pixels.
+const TINY_PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAwAAAAICAIAAABChommAAAAtUlEQVR4nA3KMQ1AIQxAwbrAADMuSCoCC52QwYQFNLw0wQUzBpDR/28+ESEJRahCE7owhCVs4QhPCEEkkzIlUzMt0zMjszI7czIvE/lPSlKKUpWmdGUoS9nKUZ4S+icjGcWoRjO6MYxlbOMYzwj70yRNyqRO2qRPxmRN9uRM3iTmn5zkFKc6zenOcJazneM8J/xPl3Qpl3ppl34Zl3XZl3N5l7h/ClJQghq0oAcjWMEOTvCCCD5/rKLV2NZS/wAAAABJRU5ErkJggg==",
+  ),
+  (c) => c.charCodeAt(0),
+);
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -185,6 +194,8 @@ export function startDevServer(port = 0, { chatter = true } = {}) {
           return json({ status: "accepted" }, 202);
         },
       },
+      "/api/attachments/:id": () =>
+        new Response(TINY_PNG, { headers: { "content-type": "image/png" } }),
       "/api/events": (req: Request) => {
         let client: Client;
         const stream = new ReadableStream<Uint8Array>({

@@ -109,6 +109,14 @@ export function createApi(baseUrl: string = DEFAULT_BASE_URL) {
       return res.json();
     },
 
+    // Downscaled PNG of an image attachment, sized for inline terminal
+    // rendering. The server converts whatever the source format is.
+    async attachmentThumb(id: number, maxpx: number): Promise<Uint8Array> {
+      const res = await fetch(`${base}/api/attachments/${id}?thumb=${maxpx}`);
+      if (!res.ok) throw new Error(`attachment ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+
     async markRead(conversationId: string): Promise<void> {
       try {
         await fetch(`${conversationPath(conversationId)}/read`, { method: "POST" });

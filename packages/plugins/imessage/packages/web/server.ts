@@ -301,6 +301,23 @@ export function createApp({ client, nameDir }: AppDeps) {
     return dest;
   }
 
+  // Downscaled PNG for terminal inline rendering (the TUI feeds these bytes
+  // straight into the kitty graphics escape, which only takes PNG). sips reads
+  // every format Messages stores, including HEIC.
+  function thumbPng(src: string, id: number, maxpx: number): string | null {
+    fs.mkdirSync(CONVERT_DIR, { recursive: true });
+    const out = path.join(CONVERT_DIR, `${id}.t${maxpx}.png`);
+    if (fs.existsSync(out)) return out;
+
+    const result = spawnSync(
+      "/usr/bin/sips",
+      ["-Z", String(maxpx), "-s", "format", "png", src, "--out", out],
+      { encoding: "utf8" },
+    );
+    if (result.status !== 0 || !fs.existsSync(out)) return null;
+    return out;
+  }
+
   // HEIC/HEIF can't render in browsers; convert to JPEG with sips and cache it.
   function heicToJpeg(src: string, id: number): string | null {
     fs.mkdirSync(CONVERT_DIR, { recursive: true });
@@ -316,7 +333,7 @@ export function createApp({ client, nameDir }: AppDeps) {
     return out;
   }
 
-  function serveAttachment(id: number): Response {
+  function serveAttachment(id: number, params?: URLSearchParams): Response {
     const filePath = client.attachmentPath(id);
     if (!filePath) return new Response("Not found", { status: 404 });
 
@@ -332,6 +349,16 @@ export function createApp({ client, nameDir }: AppDeps) {
 
     const cache = { "cache-control": "max-age=86400" };
     const ext = path.extname(resolved).toLowerCase();
+
+    const thumbRaw = params?.get("thumb");
+    if (thumbRaw != null) {
+      const maxpx = Math.min(2048, Math.max(32, Number(thumbRaw) || 0));
+      const thumb = maxpx >= 32 ? thumbPng(resolved, id, maxpx) : null;
+      if (!thumb) return new Response("Conversion failed", { status: 500 });
+      return new Response(Bun.file(thumb), {
+        headers: { ...cache, "content-type": "image/png" },
+      });
+    }
 
     if (ext === ".heic" || ext === ".heif") {
       const jpeg = heicToJpeg(resolved, id);
@@ -682,7 +709,9 @@ export function createServer(deps: AppDeps, port: number = PORT) {
         GET: (req) => guard(req) ?? app.events(req),
       },
       "/api/attachments/:id": {
-        GET: (req) => guard(req) ?? app.serveAttachment(Number(req.params.id)),
+        GET: (req) =>
+          guard(req) ??
+          app.serveAttachment(Number(req.params.id), new URL(req.url).searchParams),
       },
     },
     fetch() {

@@ -262,6 +262,7 @@ export function App(props: {
             conversation={active()}
             thread={activeThread()}
             focused={focus() === "messages"}
+            api={store.api}
             onLoadOlder={loadOlder}
             handle={(handle) => (messagesHandle = handle)}
           />
