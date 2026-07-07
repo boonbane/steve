@@ -136,9 +136,37 @@ export function startDevServer(port = 0, { chatter = true } = {}) {
         POST: async (req: Bun.BunRequest<"/api/conversations/:id/messages">) => {
           const conversation = find(req.params.id);
           if (!conversation) return json({ error: "conversation not found" }, 404);
-          const body = (await req.json()) as { text?: string };
-          if (!body.text?.trim()) return json({ error: "text or image required" }, 400);
-          const message = appendMessage(conversation.id, body.text, true);
+
+          let text = "";
+          let image: File | null = null;
+          if (req.headers.get("content-type")?.includes("multipart/form-data")) {
+            const form = await req.formData();
+            const rawText = form.get("text");
+            text = typeof rawText === "string" ? rawText.trim() : "";
+            const file = form.get("image");
+            if (file instanceof File && file.size > 0) image = file;
+          } else {
+            const body = (await req.json()) as { text?: string };
+            text = body.text?.trim() ?? "";
+          }
+          if (!text && !image) return json({ error: "text or image required" }, 400);
+
+          // Mirror the real server: image rows can't be correlated by text, so
+          // reply 202 and deliver over SSE — the file row first, then the caption.
+          if (image) {
+            const fileMsg = appendMessage(conversation.id, "￼", true);
+            fileMsg.attachments = [
+              { id: fileMsg.id, messageId: fileMsg.id, mime: image.type, name: image.name, kind: "image" },
+            ];
+            const caption = text ? appendMessage(conversation.id, text, true) : null;
+            setTimeout(() => {
+              broadcast("message.received", fileMsg, fileMsg.id);
+              if (caption) broadcast("message.received", caption, caption.id);
+            }, 300);
+            return json({ status: "accepted" }, 202);
+          }
+
+          const message = appendMessage(conversation.id, text, true);
           // Exercise both reply paths: even ids land as 201, odd ids as 202+SSE.
           if (message.id % 2 === 0) return json(message, 201);
           setTimeout(() => broadcast("message.received", message, message.id), 300);

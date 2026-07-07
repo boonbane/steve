@@ -74,9 +74,34 @@ export type AppDeps = {
 
 const MESSAGES_ROOT = path.join(process.env.HOME ?? "", "Library", "Messages");
 const CONVERT_DIR = path.join(import.meta.dir, ".cache", "att");
-// Outgoing image uploads are staged here as a real file on disk so AppleScript
-// can hand their path to Messages, then deleted once the send returns.
-const OUTGOING_DIR = path.join(import.meta.dir, ".cache", "outgoing");
+// Outgoing image uploads are staged as real files so AppleScript can hand
+// Messages a path — and the path must live inside ~/Library/Messages. The
+// Messages sandbox can't read arbitrary filesystem locations, and a send from
+// anywhere else fails *silently* (verified on macOS 15.6): the message goes
+// out with a dangling transfer GUID, no attachment row, and renders as a
+// filename card instead of an inline image. BlueBubbles stages attachments in
+// the same place for the same reason.
+const OUTGOING_DIR = path.join(MESSAGES_ROOT, "steve-outgoing");
+
+const STAGED_TTL_MS = 5 * 60 * 1000;
+
+function sweepOutgoing() {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(OUTGOING_DIR);
+  } catch {
+    return; // nothing staged yet
+  }
+  const cutoff = Date.now() - STAGED_TTL_MS;
+  for (const entry of entries) {
+    const file = path.join(OUTGOING_DIR, entry);
+    try {
+      if (fs.statSync(file).mtimeMs < cutoff) fs.rmSync(file, { force: true });
+    } catch {
+      // Already gone or unreadable; the next sweep retries.
+    }
+  }
+}
 
 // iMessage caps attachments around 100MB; reject anything larger before it ever
 // reaches Messages (and tie up the send timeout).
@@ -268,6 +293,7 @@ export function createApp({ client, nameDir }: AppDeps) {
   // Messages picks the right attachment type.
   async function stageUpload(file: File): Promise<string> {
     fs.mkdirSync(OUTGOING_DIR, { recursive: true });
+    sweepOutgoing();
     const ext =
       path.extname(file.name) || MIME_EXT[file.type.toLowerCase()] || "";
     const dest = path.join(OUTGOING_DIR, `${crypto.randomUUID()}${ext}`);
@@ -432,42 +458,43 @@ export function createApp({ client, nameDir }: AppDeps) {
     }
 
     return serializeSend(conversation.sendChatId, async () => {
+      const before = client.latestRowId();
       try {
-        const before = client.latestRowId();
-        try {
-          await client.send(
-            conversation.sendChatId,
-            text,
-            attachmentPath ?? undefined,
-          );
-        } catch (err) {
-          const message = err instanceof Error ? err.message : "send failed";
-          consola.error(`send to ${id} failed:`, message);
-          return json({ error: message }, 500);
-        }
+        await client.send(
+          conversation.sendChatId,
+          text,
+          attachmentPath ?? undefined,
+        );
+      } catch (err) {
+        // The file never reached Messages, so it's safe to drop right away.
+        if (attachmentPath) fs.rm(attachmentPath, { force: true }, () => {});
+        const message = err instanceof Error ? err.message : "send failed";
+        consola.error(`send to ${id} failed:`, message);
+        return json({ error: message }, 500);
+      }
 
-        // An image send produces two rows (file then caption) and the image row
-        // has no matchable text, so skip correlation and let /api/events deliver
-        // both. Text-only sends still resolve to their landed row for a clean,
-        // flicker-free optimistic swap.
-        if (!attachmentPath) {
-          for (let attempt = 0; attempt < SEND_POLL_ATTEMPTS; attempt++) {
-            await Bun.sleep(SEND_POLL_INTERVAL_MS);
-            const landed = client.sent(conversation.chatIds, before, text);
-            if (landed) {
-              return json(enrichMessages([landed], conversation.id)[0], 201);
-            }
+      if (attachmentPath) {
+        // Leave the staged file for the transfer agent (see STAGED_TTL_MS);
+        // this timer is best-effort — sweepOutgoing covers a restart.
+        const staged = attachmentPath;
+        setTimeout(() => fs.rm(staged, { force: true }, () => {}), STAGED_TTL_MS);
+      }
+
+      // An image send produces two rows (file then caption) and the image row
+      // has no matchable text, so skip correlation and let /api/events deliver
+      // both. Text-only sends still resolve to their landed row for a clean,
+      // flicker-free optimistic swap.
+      if (!attachmentPath) {
+        for (let attempt = 0; attempt < SEND_POLL_ATTEMPTS; attempt++) {
+          await Bun.sleep(SEND_POLL_INTERVAL_MS);
+          const landed = client.sent(conversation.chatIds, before, text);
+          if (landed) {
+            return json(enrichMessages([landed], conversation.id)[0], 201);
           }
         }
-
-        return json({ status: "accepted" }, 202);
-      } finally {
-        // Messages copies the attachment into its own store during the synchronous
-        // send, so the staged file is safe to remove once send() has returned.
-        if (attachmentPath) {
-          fs.rm(attachmentPath, { force: true }, () => {});
-        }
       }
+
+      return json({ status: "accepted" }, 202);
     });
   }
 

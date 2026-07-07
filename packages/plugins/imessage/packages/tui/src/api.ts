@@ -32,6 +32,8 @@ export type Message = {
   attachments: Attachment[];
 };
 
+export type OutgoingImage = { data: Uint8Array; mime: string; name: string };
+
 export const PAGE_SIZE = 50;
 
 export const DEFAULT_HOST = "127.0.0.1";
@@ -79,12 +81,26 @@ export function createApi(baseUrl: string = DEFAULT_BASE_URL) {
     },
 
     // 201 returns the landed message; 202 means it will arrive over SSE — null.
-    async send(conversationId: string, text: string): Promise<Message | null> {
-      const res = await fetch(`${conversationPath(conversationId)}/messages`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
+    // Image sends always take the multipart path and always resolve 202.
+    async send(
+      conversationId: string,
+      text: string,
+      image?: OutgoingImage,
+    ): Promise<Message | null> {
+      let init: RequestInit;
+      if (image) {
+        const form = new FormData();
+        form.set("text", text);
+        form.set("image", new File([image.data as BlobPart], image.name, { type: image.mime }));
+        init = { method: "POST", body: form };
+      } else {
+        init = {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text }),
+        };
+      }
+      const res = await fetch(`${conversationPath(conversationId)}/messages`, init);
       if (res.status === 202) return null;
       if (!res.ok) {
         const detail = (await res.json().catch(() => null)) as { error?: string } | null;

@@ -1,6 +1,13 @@
 import { batch, onCleanup } from "solid-js";
 import { createStore, produce, reconcile } from "solid-js/store";
-import { createApi, PAGE_SIZE, type Api, type Conversation, type Message } from "./api.ts";
+import {
+  createApi,
+  PAGE_SIZE,
+  type Api,
+  type Conversation,
+  type Message,
+  type OutgoingImage,
+} from "./api.ts";
 import { subscribeEvents } from "./sse.ts";
 
 export type ConnectionStatus = "connecting" | "open" | "closed";
@@ -101,9 +108,10 @@ export function createAppStore(api: Api = createApi()) {
     }
   }
 
-  async function send(id: string, text: string) {
+  async function send(id: string, text: string, image?: OutgoingImage) {
+    const tempId = nextTempId--;
     const temp: Message = {
-      id: nextTempId--,
+      id: tempId,
       conversationId: id,
       sender: "me",
       senderName: null,
@@ -111,12 +119,16 @@ export function createAppStore(api: Api = createApi()) {
       createdAt: new Date().toISOString(),
       isFromMe: true,
       service: "iMessage",
-      attachments: [],
+      // The fake attachment makes the pending bubble show the image chip and
+      // marks the temp as adoptable by the SSE echo's attachment row.
+      attachments: image
+        ? [{ id: tempId, messageId: tempId, mime: image.mime, name: image.name, kind: "image" }]
+        : [],
     };
     appendMessage(temp);
     setState("status", "sending…");
     try {
-      const sent = await api.send(id, text);
+      const sent = await api.send(id, text, image);
       batch(() => {
         setState("status", "");
         // 201: swap the optimistic bubble for the landed row. 202: leave it;
@@ -202,9 +214,18 @@ export function createAppStore(api: Api = createApi()) {
   function onMessageReceived(msg: Message) {
     batch(() => {
       // The SSE echo of our own optimistic 202 send: adopt it by text match.
+      // An image send's file row carries no matchable text (just the U+FFFC
+      // marker), so it adopts the pending image temp by attachment presence;
+      // a caption row that follows then appends as its own message, matching
+      // how Messages actually stores the pair.
       if (msg.isFromMe) {
         const thread = state.threads[msg.conversationId];
-        const temp = thread?.messages.find((m) => m.id < 0 && m.text === msg.text);
+        const temp = thread?.messages.find(
+          (m) =>
+            m.id < 0 &&
+            (m.text === msg.text ||
+              (msg.attachments.length > 0 && m.attachments.length > 0)),
+        );
         if (temp) {
           replaceTemp(msg.conversationId, temp.id, msg);
           bump(msg);

@@ -104,6 +104,43 @@ test("hide-unknown checkbox: x toggles from sidebar, space when focused", async 
   setup.renderer.destroy();
 });
 
+test("ctrl-v attaches a clipboard image; enter sends it over multipart", async () => {
+  const clip = () => ({
+    data: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    mime: "image/png",
+    name: "clip.png",
+  });
+  const setup = await testRender(
+    () => <App store={createAppStore(createApi(server.url))} clipboard={clip} />,
+    { width: 110, height: 32 },
+  );
+  await frameWhen(setup, (f) => f.includes("Jerry Garcia"));
+
+  // Send to Bob Weir so the paginated Jerry Garcia thread other tests rely on
+  // stays untouched (the dev server is shared across this file).
+  setup.mockInput.pressKey("j");
+  setup.mockInput.pressKey("j");
+  await frameWhen(setup, (f) => f.includes("Bob Weir — "));
+  setup.mockInput.pressKey("RETURN");
+  await frameWhen(setup, (f) => f.includes("enter send"));
+
+  setup.mockInput.pressKey("v", { ctrl: true });
+  const chip = await frameWhen(setup, (f) => f.includes("clip.png"));
+  expect(chip).toContain("KB — esc removes");
+
+  await setup.mockInput.typeText("with caption");
+  setup.mockInput.pressKey("RETURN");
+  // 202 + SSE: the optimistic bubble is adopted by the broadcast file row and
+  // the caption arrives as its own message.
+  const sent = await frameWhen(
+    setup,
+    (f) => f.includes("with caption") && f.includes("clip.png") && !f.includes("sending…"),
+  );
+  // Chip is gone from the composer but the attachment shows in the thread.
+  expect(sent).not.toContain("esc removes");
+  setup.renderer.destroy();
+});
+
 test("tab cycles into messages pane; g loads older history", async () => {
   const setup = await boot();
   await frameWhen(setup, (f) => f.includes("Sugar Magnolia"));

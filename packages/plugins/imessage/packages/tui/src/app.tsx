@@ -4,7 +4,8 @@ import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
 import { Composer } from "./components/composer.tsx";
 import { Messages, type MessagesHandle } from "./components/messages.tsx";
 import { Sidebar } from "./components/sidebar.tsx";
-import { createApi } from "./api.ts";
+import { createApi, type OutgoingImage } from "./api.ts";
+import { readClipboardImage } from "./clipboard.ts";
 import { filterConversations, isKnown } from "./format.ts";
 import { createAppStore, type Store } from "./store.ts";
 import { theme } from "./theme.ts";
@@ -12,7 +13,11 @@ import { theme } from "./theme.ts";
 type Focus = "search" | "sidebar" | "filter" | "messages" | "composer";
 const FOCUS_ORDER: Focus[] = ["search", "sidebar", "filter", "messages", "composer"];
 
-export function App(props: { store?: Store; url?: string }) {
+export function App(props: {
+  store?: Store;
+  url?: string;
+  clipboard?: () => OutgoingImage | null;
+}) {
   const store = props.store ?? createAppStore(createApi(props.url));
   const renderer = useRenderer();
   const dimensions = useTerminalDimensions();
@@ -23,6 +28,7 @@ export function App(props: { store?: Store; url?: string }) {
   // Selection tracks the conversation, not the row: live messages reorder the
   // list underneath the cursor and the highlight should follow.
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
+  const [attachment, setAttachment] = createSignal<OutgoingImage | null>(null);
   let messagesHandle: MessagesHandle | undefined;
 
   const filtered = createMemo(() => {
@@ -50,6 +56,11 @@ export function App(props: { store?: Store; url?: string }) {
 
   createEffect(
     on(query, () => setSelectedId(filtered()[0]?.id ?? null), { defer: true }),
+  );
+
+  // A pending image belongs to the conversation it was pasted into.
+  createEffect(
+    on(() => store.state.activeId, () => setAttachment(null), { defer: true }),
   );
 
   // Browsing previews the thread (debounced so holding j doesn't hammer the
@@ -100,6 +111,11 @@ export function App(props: { store?: Store; url?: string }) {
       return;
     }
     if (key.name === "escape") {
+      // First escape in the composer drops a pending image, second leaves.
+      if (focus() === "composer" && attachment()) {
+        setAttachment(null);
+        return;
+      }
       if (focus() === "search") setQuery("");
       setFocus(focus() === "composer" ? "messages" : "sidebar");
       return;
@@ -128,6 +144,7 @@ export function App(props: { store?: Store; url?: string }) {
         handleMessagesKey(key);
         break;
       case "composer":
+        if (key.name === "v" && key.ctrl) pasteImage();
         break; // textarea owns everything else
     }
   });
@@ -180,10 +197,22 @@ export function App(props: { store?: Store; url?: string }) {
     if (id) void store.loadOlder(id);
   };
 
+  const pasteImage = () => {
+    const image = (props.clipboard ?? readClipboardImage)();
+    if (image) {
+      setAttachment(image);
+      store.setStatus("");
+    } else {
+      store.setStatus("no image on clipboard");
+    }
+  };
+
   const send = (text: string) => {
     const id = store.state.activeId;
     if (!id) return;
-    store.send(id, text).catch(() => {
+    const image = attachment() ?? undefined;
+    setAttachment(null);
+    store.send(id, text, image).catch(() => {
       // surfaced via store.state.status
     });
   };
@@ -191,7 +220,7 @@ export function App(props: { store?: Store; url?: string }) {
   const footer = () => {
     const hints =
       focus() === "composer"
-        ? "enter send · ctrl-j newline · esc back · tab focus"
+        ? "enter send · ctrl-v paste image · ctrl-j newline · esc back · tab focus"
         : focus() === "filter"
           ? "space toggle · tab focus · q quit"
           : "tab focus · j/k move · enter open · / search · x unknown · q quit";
@@ -239,6 +268,7 @@ export function App(props: { store?: Store; url?: string }) {
           <Composer
             focused={focus() === "composer"}
             enabled={store.state.activeId != null}
+            attachment={attachment()}
             onSend={send}
           />
         </box>
